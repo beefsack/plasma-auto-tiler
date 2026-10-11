@@ -96,7 +96,7 @@ and optional tray without changing the external consumer repository.
 - After the user-owned restart, the local shadow path
   `~/.local/share/kwin/scripts/plasma-auto-tiler-kwin` was absent and default
   KPackage resolution uniquely selected the active-generation package
-  `/nix/store/5z7pcqklpk9x037k9b933snc3a4zq6rw-plasma-auto-tiler-kwin-0.1.0/share/kwin/scripts/plasma-auto-tiler-kwin`.
+  `plasma-auto-tiler-kwin-0.1.0` (`share/kwin/scripts/plasma-auto-tiler-kwin`).
   Its `metadata.json` SHA-256 was
   `ceb49666a22cd18afa8ab5381eb997df1608dbcfc1bd8049d45823757474903f` and
   `contents/code/main.js` SHA-256 was

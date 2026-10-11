@@ -4,7 +4,7 @@ Status: complete. Source research only, no live KWin/D-Bus interaction.
 Extends `js-baseline-measurement/research/geometry-batching.md`'s Q3
 (native-plugin reachability) rather than repeating it.
 
-Source: `/tmp/opencode/kwin-src`, git tag `v6.7.3`
+Source: upstream KWin source, git tag `v6.7.3`
 (`45ec9a6d0ed312a803ff5658a2a3e61f221566c6`), sparse-checkout broadened
 this stint (`git sparse-checkout add src/effect autotests/integration/
 effects/scripts`) to cover the effects-API directories milestone 1's
@@ -141,7 +141,7 @@ separate-process alternatives are moot and are not weighed here.
 ## Symbol check on installed KWin library
 
 Focused `nm -DC` on the installed library at
-`/nix/store/kfacyll1bnh89q9aqbs54qjgda2c4hkm-kwin-6.7.3/lib/libkwin.so.6.7.3`
+`<kwin-6.7.3>/lib/libkwin.so.6.7.3` (generalized store-package placeholder; installed KWin 6.7.3 library)
 filtered with `rg 'EffectPluginFactory|PluginEffectLoader'`:
 
 - Exported: `KWin::EffectPluginFactory` constructor, destructor,

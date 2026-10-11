@@ -37,7 +37,7 @@ Workers follow each fill slice. The Lead owns this note and the triage report.
 
 - Initial workspace clean at `b3d7265`, tracking `origin/main`; three user
   stashes present. Matrix full pin and clean sibling checkout confirmed at
-  `/home/beefsack/Development/cosmic-comp`; sparse temporary exports rejected.
+  `upstream pop-os/cosmic-comp repository`; sparse temporary exports rejected.
 - Orientation reconciled all 49 candidates. Shared map: geometric MRU-leaf
   admission, separate tiled/floating focus paths, native workspace-first
   vertical move fallback, retain-slot maximize, saved-slot fullscreen,
@@ -121,7 +121,7 @@ All cosmic-comp locations below are at
 ## Final verification and next action
 
 - Four separately authored source reviews plus final occurrence-aware review.
-  Repaired temporary checker: `/tmp/opencode/cosmic-final-reconcile-20261009.py`
+  Repaired temporary checker: `cosmic-final-reconcile-20261009.py`
   and its JSON output. Initial final-check claims were not accepted until the
   cited-file and boolean/occurrence/accounting repairs passed.
 - Final integrated check: 95 assertions passed. Exactly 1,896 reference

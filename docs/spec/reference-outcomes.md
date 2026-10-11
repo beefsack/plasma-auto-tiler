@@ -2701,7 +2701,7 @@ Legend:
   src/utils/xcbutils.h:932-972 (`hasMinSize`/`hasMaxSize` gates; absent
   max maps to `INT_MAX` clamped to >=1; absent min falls back to base
   size, absent base to 0,0) @8438567a
-  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw
+  (pinned KWin source at 8438567a via upstream export, raw
   KDE/kwin@8438567a provenance; karousel `resizeable` resolves here)
   Raw sources: [window.h](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/window.h),
   [xdgshellwindow.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/xdgshellwindow.cpp),
@@ -2726,7 +2726,7 @@ Legend:
   pulls into the current desktop, `DoNothing`) +
   src/options.h:321-326 (policy enum) and :821-823 (default
   `SwitchToOtherDesktop`) @8438567a
-  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw
+  (pinned KWin source at 8438567a via upstream export, raw
   KDE/kwin@8438567a provenance; TabBox listing/activation policy
   resolves here)
   Raw sources: [tabbox.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/tabbox/tabbox.cpp),
@@ -2750,7 +2750,7 @@ Legend:
   src/kcms/options/kwinoptions_settings.kcfg:128-132 (shipped FSP
   default Low=1) and :43-49 (shipped `SwitchToOtherDesktop`)
   @8438567a
-  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw
+  (pinned KWin source at 8438567a via upstream export, raw
   KDE/kwin@8438567a provenance; app-request outcome forks on the
   message timestamp; hint marks without focusing; activation clears)
   Raw sources: [netinfo.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/netinfo.cpp),
@@ -2766,7 +2766,7 @@ Legend:
   `demandAttention`) and :4116-4130 (timestamp source: user time with
   startup-id override) and :4257-4330 (`allowWindowActivation` FSP/
   timestamp fork) @8438567a
-  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw
+  (pinned KWin source at 8438567a via upstream export, raw
   KDE/kwin@8438567a provenance; X11 newcomer activation leg; karousel
   focus-taker follows only on KWin focus)
   Raw sources: [x11window.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/x11window.cpp).
@@ -2776,7 +2776,7 @@ Legend:
   src/activation.cpp:578-614 (`mayActivate` token/app-id/
   transient-serial/rules legs) + src/xdgactivationv1.cpp:104-125
   (token activate path) @8438567a
-  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw
+  (pinned KWin source at 8438567a via upstream export, raw
   KDE/kwin@8438567a provenance; Wayland newcomer activation leg)
   Raw sources: [workspace.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/workspace.cpp),
   [activation.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/activation.cpp),
@@ -2787,7 +2787,7 @@ Legend:
   index) + src/workspace.cpp:856-857 (managed X11 append at manage) and
   :868-869 (unmanaged append) and :926-927 (Wayland append at add)
   @8438567a
-  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw
+  (pinned KWin source at 8438567a via upstream export, raw
   KDE/kwin@8438567a provenance; script-visible window order is KWin
   manage/creation order, not focus order)
   Raw sources: [workspace.h](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/workspace.h),
@@ -2802,7 +2802,7 @@ Legend:
   `setActiveWindow`) + src/options.h:316-318 (`focusPolicyIsReasonable`
   is ClickToFocus/FocusFollowsMouse) + src/options.cpp:35-36
   (`ClickToFocus` default, `nextFocusPrefersMouse` false) @8438567a
-  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw
+  (pinned KWin source at 8438567a via upstream export, raw
   KDE/kwin@8438567a provenance; script focus path, not newcomer admission)
   Raw sources: [workspace_wrapper.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/scripting/workspace_wrapper.cpp),
   [workspace.h](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/workspace.h),
@@ -2819,7 +2819,7 @@ Legend:
   MRU shown window on desktop/output) +
   src/kcms/options/kwinoptions_settings.kcfg:92-104 (shipped
   `ClickToFocus` plus `NextFocusPrefersMouse` false) @8438567a
-  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw
+  (pinned KWin source at 8438567a via upstream export, raw
   KDE/kwin@8438567a provenance; native desktop-switch activation leg)
   Raw sources: [virtualdesktops.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/virtualdesktops.cpp),
   [workspace.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/workspace.cpp),
@@ -2830,22 +2830,22 @@ Legend:
   last-desktop protected) + :603-651 (`setCount` explicit resize only) +
   karousel:src/lib/world/DesktopManager.ts:79-112 (`updateDesktops`/
   `removeKwinDesktop`/`destroyDesktop` destroy only KWin-removed
-  desktops) @8438567a for kwin (pinned via /tmp/opencode/kwin-8438567
-  export, raw KDE/kwin@8438567a provenance),
+  desktops) @8438567a for kwin (pinned via upstream KWin source at 8438567a export,
+  raw KDE/kwin@8438567a provenance),
   @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b for karousel
   (no auto-spare, no empty auto-removal; emptied desktops retained)
   Raw sources: [virtualdesktops.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/virtualdesktops.cpp).
 - `S-kwin-sticky` kwin:src/window.cpp:697-809 (`setDesktops` writes the list with rules check plus transient/modal propagation and `desktopsChanged`; `setOnAllDesktops(true)` writes empty, false writes the current desktop; `isOnDesktop` is true for empty) @8438567a
-  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw KDE/kwin@8438567a provenance; sticky assignment/visibility leg)
+  (pinned KWin source at 8438567a via upstream export, raw KDE/kwin@8438567a provenance; sticky assignment/visibility leg)
   Raw sources: [window.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/window.cpp).
 - `S-kwin-close` kwin:src/activation.cpp:433-480 (`activateNextWindow`: no-op unless the closed window was active, else MRU focus-chain `nextForDesktop` plus `requestFocus`, desktop fallback) + src/focuschain.cpp:247-270 (`isUsableFocusCandidate` shown/on-current checks; `nextForDesktop` MRU usable pick) + src/workspace.cpp:955-961 (`removeWaylandWindow` activates-next before remove) + src/x11window.cpp:218/`destroyWindow` (X11 release/destroy activates-next before remove) @8438567a
-  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw KDE/kwin@8438567a provenance; native close refocus leg)
+  (pinned KWin source at 8438567a via upstream export, raw KDE/kwin@8438567a provenance; native close refocus leg)
   Raw sources: [activation.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/activation.cpp), [focuschain.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/focuschain.cpp), [workspace.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/workspace.cpp), [x11window.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/x11window.cpp).
 - `S-kwin-min` kwin:src/window.cpp:848-866 (`setMinimized` writes the flag with rules/minimizable gates and emits only; no focus call) + src/activation.cpp:294-341 (`activateWindow` unminimizes as one step of activation; unminimize alone issues no activation) @8438567a
-  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw KDE/kwin@8438567a provenance; native minimize/unminimize focus leg)
+  (pinned KWin source at 8438567a via upstream export, raw KDE/kwin@8438567a provenance; native minimize/unminimize focus leg)
   Raw sources: [window.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/window.cpp), [activation.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/activation.cpp).
 - `S-kwin-moveresize` kwin:src/window.cpp:775 (`moveResize` writes the geometry via `setMoveResizeGeometry`/`moveResizeInternal`) + :1039-1086 (interactive move/resize session start/finish signals) + :1116-1139 (`startDelayed`/`stopDelayed`: title-bar press arms a `startDragTime` timer, release stops it) + :2066-2092 (`MouseMove` press path starts the session immediately) + :2566-2575 (`endInteractiveMoveResize` finishes on release) + :2764-2797 (decoration press arms the delay, release finishes only if started) + src/input.cpp:680-692 (`MoveResizeInputFilter` release ends the session) + :1295-1324 (`Meta+Left` resolves to the Move path via `commandAll`) + src/kcms/options/kwinoptions_settings.kcfg:152-164,203-218,291-315 (shipped title-bar Raise/ActivateAndRaise plus `Meta`+`Move` defaults) @8438567a
-  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw KDE/kwin@8438567a provenance; native float pointer translation plus title-bar-delayed vs modifier-immediate gesture legs)
+  (pinned KWin source at 8438567a via upstream export, raw KDE/kwin@8438567a provenance; native float pointer translation plus title-bar-delayed vs modifier-immediate gesture legs)
   Raw sources: [window.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/window.cpp), [input.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/input.cpp), [kwinoptions_settings.kcfg](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/kcms/options/kwinoptions_settings.kcfg).
 - `S-kar-admit` karousel:src/lib/world/ClientManager.ts:30-56
   (`addClient` evaluates the shapeability gates once at add) and

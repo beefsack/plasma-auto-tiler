@@ -6,7 +6,7 @@ Recover normal tiling when a window moves to another workspace while its Meta dr
 
 ## Evidence and approach
 
-- User trace `~/Downloads/plasma-auto-tiler-dev.1t4fJa.log`: send follows the mover to workspace 2 at 432-456; the later drop dispatches as cross-output at 939-959 and refuses `unchanged`; follow-up reconciles at 966-970 and 1002-1005 reject `window-out-of-bounds` (`54,586,756,478` versus `0,44,1536,980`).
+- User trace `plasma-auto-tiler-dev.1t4fJa.log`: send follows the mover to workspace 2 at 432-456; the later drop dispatches as cross-output at 939-959 and refuses `unchanged`; follow-up reconciles at 966-970 and 1002-1005 reject `window-out-of-bounds` (`54,586,756,478` versus `0,44,1536,980`).
 - Suppress stale Started-workspace drops at the KWin adapter, preserving valid cross-output behavior. Remove observation-containment rejection in the protocol for valid native geometry and let existing convergence and plan geometry recover. Keep strict shape/homing and reply validation. Replace tests that pin the removed rejection with behavior tests for repeated convergence and the held-drag workspace transition.
 
 ## Units and acceptance
@@ -20,7 +20,7 @@ Recover normal tiling when a window moves to another workspace while its Meta dr
 - User Resilience/Simplicity direction: observed valid out-of-bounds geometry is host drift. Orchestrator default: changed-workspace drag does not apply stale drop placement; ordinary send/admission determines its new tile. Lead choice: compare the mover's fresh native workspace to Started, rather than comparing the projected pointer destination; output moves preserve existing cross-output behavior.
 - Protocol removes request-side containment checks for valid observed rectangles (including send targets), preserving malformed-rectangle, homing, focus and reply checks. KWin refuses only native same-output workspace drift before stale drop dispatch and logs a correlated `stale-workspace` rejection; ordinary drag marker reconciliation remains. Obsolete planner rejection diagnostic and tests removed.
 - Regression coverage: KWin entry held-drag/send/release, destination admission and source reflow, pointer-projection/native-workspace discriminator and valid cross-output; Rust retained three-window out-of-bounds reconcile repeated, later focus, malformed rectangle, and occupied workspace-send target drift.
-- Verification: `cargo test --workspace --offline`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --offline -- -D warnings`, KWin `npm run typecheck` and `npm test` (801 passed), `just check-portable`, `git diff --check` all passed. No shell/native files changed; no live testing. Production +20/-130 (net -110); tests +421/-123 (net +298), excluding user `devenv.nix` edit. Live acceptance remains pending on the user's laptop.
+- Verification: `cargo test --workspace --offline`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --offline -- -D warnings`, KWin `npm run typecheck` and `npm test` (801 passed), `just check-portable`, `git diff --check` all passed. No shell/native files changed; no live testing. Production +20/-130 (net -110); tests +421/-123 (net +298), excluding user `devenv.nix` edit. Live acceptance remains pending on the user's test system.
 
 ## User-operated live check (`just dev`)
 

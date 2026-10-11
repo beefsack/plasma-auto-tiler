@@ -7,13 +7,13 @@ recommended or selected.
 - Access date for all citations: 2026-08-15.
 - Installed host: KWin `6.7.3` (`kwin_wayland --version` reports `kwin 6.7.3`);
   dev headers under
-  `/nix/store/483vmk08g6bjaa3bvf3abn10cwpw6ap9-kwin-6.7.3-dev/include/kwin/`;
+  `KWin 6.7.3 dev headers include/kwin/`;
   KDecoration dev headers under
-  `/nix/store/j04pmdgm0hsm5f2ryzr95inx508p7zvc-kdecoration-6.7.3-dev/include/KDecoration3/`.
+  `KDecoration 6.7.3 dev headers include/KDecoration3/`.
 - Local upstream checkouts for exact-version verification:
-  `/tmp/opencode/kwin-pinned` at `v6.7.3` (commit
+  upstream KWin source at pinned `v6.7.3` (commit
   `45ec9a6d0ed312a803ff5658a2a3e61f221566c6`, 2026-07-14);
-  `/tmp/opencode/kwin-6.7.4` at `v6.7.4` (commit
+  upstream KWin source at `v6.7.4` (commit
   `8438567a741826da8b7536a8b10eb3af8fc8820d`, 2026-08-04).
 
 ## Source Map
@@ -34,7 +34,7 @@ recommended or selected.
 | C12 | `highlightwindow` = built-in active-window highlight (animation, on demand) | local v6.7.3 source | https://invent.kde.org/plasma/kwin/-/blob/v6.7.3/src/plugins/highlightwindow/highlightwindow.cpp | grep local source |
 | C13 | No Vulkan scene item renderer in 6.7.3 (renderers: `itemrenderer_opengl`, `itemrenderer_qpainter`) | local v6.7.3 source/headers | https://invent.kde.org/plasma/kwin/-/tree/v6.7.3/src/scene | ls local source/headers |
 | C14 | Decoration API is `KDecoration3`; exposes `KDecoration3::BorderOutline` | installed header | https://invent.kde.org/plasma/kdecoration/-/blob/v6.7.3/src/decoration.h | ls local header |
-| C15 | No change to border/outline scene files between `v6.7.3` and `v6.7.4` | local git diff | `git -C /tmp/opencode/kwin-6.7.4 diff v6.7.3 -- src/scene/outlinedborderitem.* src/scene/borderoutline.h src/scene/decorationitem.cpp src/scene/itemrenderer_qpainter.cpp` | empty diff |
+| C15 | No change to border/outline scene files between `v6.7.3` and `v6.7.4` | local git diff | `git -C <kwin-checkout> diff v6.7.3 -- src/scene/outlinedborderitem.* src/scene/borderoutline.h src/scene/decorationitem.cpp src/scene/itemrenderer_qpainter.cpp` | empty diff |
 
 The Invent URLs above are the canonical upstream locations for the cited paths;
 content was verified against the local `v6.7.3` checkout, not re-fetched from

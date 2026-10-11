@@ -328,7 +328,7 @@ does not prove runtime parity on any desktop.
 
 ## Local inventory and evidence status
 
-All local paths below are relative to `C:\Users\beefs\Development`. Audit used
+All local paths below are relative to a local development directory (paths dropped). Audit used
 read-only `remote -v`, `status --short`, `log -1` and `submodule status`.
 **Full/ok** means clean top-level checkout and readable bounded source, not a
 build, runtime test or exhaustive analysis. **Partial** means missing checkout

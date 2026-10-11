@@ -120,7 +120,7 @@ does not authorize recovery work, production migration, or a parity claim.
 - 2026-09-04: `nested-kwin-spike.sh check` passed with host `kwinrc` SHA-256
   `5e6fb76e94a616ef0bfdd0f26229116eb77804442ae8330aeb5634e878914abe` and mtime
   `2026-09-04 11:51:21.670154832 +1000`.
-- The one authorized launch at `/tmp/opencode/poc3-live-20260904-a1` stopped at
+- The one authorized launch for run `poc3-live-20260904-a1` stopped at
   `NOT-READY`. Its manifest remains `status=starting` with an empty
   `bus_address`; no nested socket, clients, planner, probe, adapter, POC3 start,
   owner, generation, revision, or window IDs were created.
@@ -134,7 +134,7 @@ does not authorize recovery work, production migration, or a parity claim.
   The preserved log cannot determine why KWin never reached readiness, so this
   correction does not establish live KWin startup.
 - The one authorized corrected readiness-only launch at
-  `/tmp/opencode/poc3-live-20260904-a2` also stopped at `NOT-READY`. Its
+  run `poc3-live-20260904-a2` also stopped at `NOT-READY`. Its
   `status=starting` manifest has an empty `bus_address`; `bus.txt` records the
   intended workdir-scoped bus address, but neither its bus socket nor nested
   socket exists. No nested KWin, private-bus supervisor, launcher, clients,
@@ -164,7 +164,7 @@ does not authorize recovery work, production migration, or a parity claim.
   this is isolation hygiene, not a proven crash repair. Focused sentinel and
   shell static coverage passes without executing KWin, D-Bus, or a compositor.
 - 2026-09-04: the one authorized fresh corrected readiness-only launch at
-  `/tmp/opencode/poc3-live-20260904-a3` did not reach readiness. The private
+  run `poc3-live-20260904-a3` did not reach readiness. The private
   bus and nested socket bound under its mode-0700 runtime directory, and no
   client, planner, probe, adapter, or POC3 workload was recorded or observed.
   KWin remained live while evidence was captured; no crash evidence was
@@ -238,7 +238,7 @@ does not authorize recovery work, production migration, or a parity claim.
   cleanup. Static `nested-kwin-spike.test.sh` 182 passes and
   `nested-kwin-cleanup.test.sh` 103 passes; diff check clean.
 - 2026-09-04: one authorized readiness-only attempt at
-  `/tmp/opencode/poc3-live-20260904-a4`: check, exactly one launch, and validate
+  run `poc3-live-20260904-a4`: check, exactly one launch, and validate
   all passed; manifest ready. Validated launcher PID `2741501` tick `4939622`
   `dbus-run-session`; nested wrapped KWin PID `2741504` tick `4939622`, Nix
   6.7.4 output `4halkmxd4yfrjp2prv1gj2wch7z2d4q0`, wrapper SHA
@@ -253,7 +253,7 @@ does not authorize recovery work, production migration, or a parity claim.
   `NESTED_CLEANUP_ALLOW=1 nested-kwin-cleanup.sh validate` passed warning-only.
   The nested run remains intentionally running for user physical observation;
   the exact cleanup route after observation is `NESTED_CLEANUP_ALLOW=1 bash
-  scripts/nested-kwin-cleanup.sh cleanup /tmp/opencode/poc3-live-20260904-a4`
+  scripts/nested-kwin-cleanup.sh cleanup for run `poc3-live-20260904-a4`
   and must be used only while the manifest validates; preserve residue if it
   does not.
 - `a1`, `a2`, `a3`, and coredumps remain preserved. No POC3 lifecycle
@@ -284,12 +284,12 @@ does not authorize recovery work, production migration, or a parity claim.
   no compositor or Wayland client launched. The former alternate-environment
   retry is not a supported route and must not be repeated.
 - 2026-09-04: one authorized fresh-workdir staging run at
-  `/tmp/opencode/poc3-live-20260904-b1` passed
+  run `poc3-live-20260904-b1` passed
   `nested-kwin-spike.sh check`, one launch, and validation. Its pre-client
   manifest bound supervisor/private-bus PID `2984016`, start tick `5266862`,
-  executable `/nix/store/x7zw54jlc9yqdq1m4x5lvxscflnczd0s-dbus-1.16.2/bin/dbus-run-session`,
+  executable `bin/dbus-run-session` from the D-Bus 1.16.2 store package,
   and wrapped nested KWin PID `2984019`, start tick `5266862`, executable
-  `/nix/store/4halkmxd4yfrjp2prv1gj2wch7z2d4q0-kwin-6.7.4/bin/.kwin_wayland-wrapped`.
+  `bin/.kwin_wayland-wrapped` from the host KWin 6.7.4 store package.
   The nested KWin executable SHA-256 was
   `7e3a76321175d787b92741b8d2dadab03ee4331b99e7626fca7bb8e726798c06`
   with dev:ino `36:38756793`; private runtime, bus, and socket were bound under
@@ -331,7 +331,7 @@ does not authorize recovery work, production migration, or a parity claim.
   retains only `dbus-session.conf`. No nested KWin, private bus/socket, or
   disposable client remains live. User visual acceptance was not attempted.
 - 2026-09-04: the one authorized fresh c1 staging attempt at
-  `/tmp/opencode/poc3-live-20260904-c1` passed the nested check, one launch,
+  run `poc3-live-20260904-c1` passed the nested check, one launch,
   and one manifest validation. It bound private supervisor PID `3262375`,
   tick `5660055`, and wrapped nested KWin PID `3262378`, tick `5660056`.
   The manifest records the private runtime (mode `0700`), bus, and
@@ -378,7 +378,7 @@ does not authorize recovery work, production migration, or a parity claim.
    Wayland client, D-Bus, planner, probe, POC3 command, or c1 residue was run
    or mutated by this static work.
 - 2026-09-05: the one authorized fresh d1 staging attempt at
-  `/tmp/opencode/poc3-live-20260905-d1` passed `nested-kwin-spike.sh check`,
+  run `poc3-live-20260905-d1` passed `nested-kwin-spike.sh check`,
   one launch, and manifest validation. It bound private supervisor PID
   `724396` tick `9391173` and wrapped nested KWin PID `724399` tick `9391174`;
   the private runtime (mode `0700`), bus, socket, private XDG/KDE state, and
@@ -390,7 +390,7 @@ does not authorize recovery work, production migration, or a parity claim.
   probe, adapter, POC3 command, or production action ran.
 - 2026-09-05 static diagnosis: the child-only `RLIMIT_FSIZE=32768` added to
   bound per-client stderr was inherited through the direct `env -i` exec by
-  `weston-terminal`. The private runtime had 171 GiB free and the captures were
+  `weston-terminal`. The private runtime had sufficient free space and the captures were
   301 B, while `File too large` is `EFBIG`; the 1,582,984 B Wayland buffer is
   therefore rejected by that inherited limit, not storage exhaustion. Replace
   the inherited limit with bounded parent-side diagnostic capture only; no live
@@ -417,7 +417,7 @@ does not authorize recovery work, production migration, or a parity claim.
 - 2026-09-05: the authorized e1 slice stopped at the launch freshness guard
   before any nested process or client could start. `nested-kwin-spike.sh check`
   passed for the pinned 6.7.4 KWin and host `wayland-0`; the sole
-  `nested-kwin-spike.sh launch /tmp/opencode/poc3-live-20260905-e1` exited 1
+  `nested-kwin-spike.sh launch` for run `poc3-live-20260905-e1` exited 1
   with `WORKDIR must be fresh and not exist` because the workdir had been
   created before launch. No manifest validation, disposable-client launch,
   client identity/stability observation, stderr/buffer diagnostic, planner,
@@ -426,7 +426,7 @@ does not authorize recovery work, production migration, or a parity claim.
    exact-three live identity checkpoint exists, exact cleanup is unauthorized
    and was not invoked; no host baseline or isolation claim is accepted.
 - 2026-09-05: one authorized fresh-workdir verification at
-  `/tmp/opencode/nested-63d1ea5016b28879` passed the nested check, its sole
+  run `nested-63d1ea5016b28879` passed the nested check, its sole
   launch (1.55 s), and one manifest validation. Its private supervisor
   `3093268`/`10065855` (`dbus-run-session`) and nested KWin
   `3093271`/`10065856` (wrapped KWin) remain bound to the manifest's private
@@ -440,7 +440,7 @@ does not authorize recovery work, production migration, or a parity claim.
   POC3 command ran. Per the identity-failure rule, cleanup was not invoked and
   the entire workdir, private bus/socket, and live supervisor/KWin are
   preserved. Host exclusion is path-based only: all private state is under the
-   workdir and distinct from `/run/user/1000`; no host D-Bus, journal, or host
+   workdir and distinct from the host runtime directory; no host D-Bus, journal, or host
    process enumeration was used.
 - 2026-09-05 final retained-artifact diagnostic: the manifest records three
   final `weston-terminal` and three drainer identity triples, but retains no
@@ -464,7 +464,7 @@ does not authorize recovery work, production migration, or a parity claim.
   blocked by the failed identity checkpoint and current authorization, not
   proven technically impossible.
 - 2026-09-05: after exact manifest revalidation, one authorized cleanup route
-  invocation for `/tmp/opencode/nested-63d1ea5016b28879` reconciled the already
+  invocation for run `nested-63d1ea5016b28879` reconciled the already
   absent disposable clients and stopped nested KWin `3093271`/`10065856`. It
   failed closed because supervisor `3093268`/`10065855` was stale or unreadable
   before its exact-stop check; no fallback signal or retry occurred.
@@ -503,7 +503,7 @@ does not authorize recovery work, production migration, or a parity claim.
   symlink, manifest-clear, and log-boundary gaps. No KWin, D-Bus, GUI client,
   residue, production behavior, commit, or push was run or changed.
 - 2026-09-05 manual Konsole staging: fresh
-  `/tmp/opencode/poc3-live-18801fbda1134dce824b931afbf9814b` was absent
+  run `poc3-live-18801fbda1134dce824b931afbf9814b` was absent
   immediately before its sole launch. The nested check, one launch, and one
   manifest validation passed. The ready manifest records live private
   `dbus-run-session` `912958`/`11003334` and wrapped KWin
@@ -519,7 +519,7 @@ does not authorize recovery work, production migration, or a parity claim.
   established. There are zero `manual_*` records, so exact-three live
   PID/start-tick/executable and eligible-normal-window evidence is absent.
 - The one permitted post-failure cleanup validation failed before cleanup
-  because `jq` resolved to `/etc/profiles/per-user/beefsack/bin/jq`, not an
+  because `jq` resolved to a host copy outside the Nix store, not an
   exact Nix-store executable. No cleanup ran and the fresh workdir, private
   bus/socket, supervisor, and nested KWin remain preserved. No planner, probe,
   adapter, POC3 command, host bus/journal, host process enumeration, or KWin
@@ -557,13 +557,13 @@ does not authorize recovery work, production migration, or a parity claim.
    remained live and distinct; neither was signalled. No host configuration,
    host bus, prior residue, or coredump was touched.
 - 2026-09-05 manual Konsole staging retry: one fresh high-entropy absent
-  workdir `/tmp/opencode/poc3-manual-stage-bb8b0e54ee3506ed9d707a88f6a08099`
+  workdir run `poc3-manual-stage-bb8b0e54ee3506ed9d707a88f6a08099`
   passed the nested check, sole launch, and manifest validation. It recorded
   private `dbus-run-session` `1966847`/`11474763` and wrapped KWin
   `1966850`/`11474764`, with the pinned 6.7.4 wrapper identity, private
   HOME/XDG/KDE state, runtime mode `0700`, private bus/socket, and checkpoint
   host-config leakage rejection. The exact store launcher was
-  `/nix/store/a2s6f3f4mxbmdcz30c9mqx5qycr23l08-konsole-26.08.0/bin/konsole`;
+  the Konsole 26.08.0 store package executable `bin/konsole`;
   slots 1-3 each ran once with `--separate` and recorded final
   `.konsole-wrapped` identities `1969074`/`11476948`,
   `1972345`/`11483363`, and `1975635`/`11492634`.
@@ -631,7 +631,7 @@ does not authorize recovery work, production migration, or a parity claim.
   external termination, or unrecorded failure), so no launcher correction is
   justified without another separately authorized attempt.
 - 2026-09-05 exact-three diagnostic staging at
-  `/tmp/opencode/poc3-diag-stage-20260905-9f8c20b1d7e46a3c5b0e17fd94c26a81`
+  run `poc3-diag-stage-20260905-9f8c20b1d7e46a3c5b0e17fd94c26a81`
   passed one nested check, one launch, and manifest validation with private
   supervisor `3428239`/`13792299` and wrapped KWin
   `3428242`/`13792300`. One `launch-diag` invocation per slot recorded clients
@@ -651,16 +651,15 @@ does not authorize recovery work, production migration, or a parity claim.
   and nested socket were independently absent afterward. The workdir and its
   logs/manifest are preserved; the cleanup host-`kwinrc` drift warning was
   diagnostic-only and no host configuration was restored or changed.
-- 2026-09-06: fresh private workdir
-  `/tmp/opencode/poc3-live-618c8578-0ecb-4764-97d0-7989eb5911eb` passed one
+- 2026-09-06: fresh private workdir for
+  run `poc3-live-618c8578-0ecb-4764-97d0-7989eb5911eb` passed one
   nested check, launch, and manifest validation. Launch recorded private
-  supervisor `2287178` and nested KWin `2287181`; the private bus was
-  `unix:path=/tmp/opencode/poc3-live-618c8578-0ecb-4764-97d0-7989eb5911eb/runtime/bus,guid=d99edc76e6b382f9065986756a9c40e5`.
+  supervisor `2287178` and nested KWin `2287181`; the private bus address was redacted.
 - Its one `launch-diag-trio` invocation reached `READY` with supervisor
   `2289393` and direct diagnostic-client PIDs `2289401`, `2289402`, and
   `2289403`; the manifest-bound `ready` check passed. The sole read-only ID
-  probe stopped before bundle load because its `jq` resolver rejected
-  `/etc/profiles/per-user/beefsack/bin/jq` as not an exact Nix-store
+  probe stopped before bundle load because its `jq` resolver rejected the host
+  copy outside the Nix store as not an exact Nix-store
   executable. No planner, probe script, adapter, POC3 command, geometry, or
   focus action ran and no internal IDs were captured.
 - One exact cleanup invocation began from a validating manifest and emitted a
@@ -710,7 +709,7 @@ does not authorize recovery work, production migration, or a parity claim.
    proven by the poison-marker cases above.
 
 - 2026-09-06 bounded resident diagnostic-trio staging used the one fresh
-  workdir `/tmp/opencode/poc3-live-ab188c80042232ce631ef6cbdf960de8`. Current
+  workdir run `poc3-live-ab188c80042232ce631ef6cbdf960de8`. Current
   diagnostic binaries built, nested check, sole launch, and manifest validation
   passed. The private `dbus-run-session` `3903573`/`15750121` and wrapped KWin
   `3903576`/`15750122` were identity-bound to the manifest. One trio supervisor
@@ -723,11 +722,10 @@ does not authorize recovery work, production migration, or a parity claim.
   host KWin exclusion were independently verified. Source-defined colors are
   red slot 1 (`0xFFC02020`), green slot 2 (`0xFF20A020`), and blue slot 3
   (`0xFF2040C0`); colors were not part of the live probe result.
-- The sole read-only ID probe used pinned
-  `/nix/store/xvd6920kffyyshg7mbw5wvfk6lg9wfkl-jq-1.8.2-bin/bin/jq`, passing
+- The sole read-only ID probe used the pinned jq 1.8.2 store package executable (`<jq-executable>`, generalized store-path placeholder), passing
   manifest and exact-three manual readiness before failing closed at its
   supervisor identity guard. Raw stderr is retained at
-  `/tmp/opencode/poc3-id-probe-raw-20260906-001.err`: `error: supervisor
+  file `poc3-id-probe-raw-20260906-001.err`: `error: supervisor
   identity is unreadable`. The guard's static awk program at
   `scripts/poc3-id-probe.sh:707` is malformed, so bundle loading and transport
   never occurred. No probe script ID, probe record, public `internalId`, KWin
@@ -764,7 +762,7 @@ does not authorize recovery work, production migration, or a parity claim.
    verification because its unrelated noisy-manual fixture exceeded a 60-second
    bound after 128 lines.
 - 2026-09-06 bounded resident diagnostic-trio staging used one fresh workdir
-  `/tmp/opencode/nested-f7ff3848f820c622a7187de1201ffdf8`. Current diagnostic
+  run `nested-f7ff3848f820c622a7187de1201ffdf8`. Current diagnostic
   binaries built, nested check, sole launch, manifest validation, and one trio
   launch passed. Private `dbus-run-session` `686892`/`16014572`, wrapped KWin
   `686895`/`16014572`, trio supervisor `689117`/`16015669`, and diagnostic
@@ -811,7 +809,7 @@ does not authorize recovery work, production migration, or a parity claim.
    retry, KWin/Wayland action, cleanup, residue/coredump touch, commit, or push
    occurred.
 - 2026-09-06 terminal authorized slice at
-  `/tmp/opencode/staging1-4edd96cbf22d8443f90ccde719863827`: built current
+  run `staging1-4edd96cbf22d8443f90ccde719863827`: built current
   diag binaries; nested check, one launch, manifest validation, one resident
   trio launch, manual ready/validation passed.
 - Private identities: `dbus-run-session` `1061838`/`16232457`, wrapped KWin
@@ -832,7 +830,7 @@ does not authorize recovery work, production migration, or a parity claim.
   failed closed because post-stop supervisor `1061838` was stale/unreadable.
    The workdir and evidence are preserved; no retry, planner, adapter, POC3
    start/focus/move, production, host, or config action occurred.
-- 2026-09-06 terminal slice at `/tmp/opencode/poc3-d6284884-1a30-41f3-8a9e-b9e61701234f` (revision `2b10cca37d89b59d4ca68b7adfb569c4c90e96e9` plus pre-existing uncommitted staging): `cargo build --bins`, nested check, sole launch, manifest validation, sole diagnostic trio launch, `ready`, and manual validate passed. Manifest recorded private `dbus-run-session` `180008`/`17220528`, wrapped KWin `180011`/`17220528`, trio supervisor `182305`, clients `182313`, `182314`, `182315`; each `first-map 320x240`. Sole `NESTED_PLANNER_ALLOW=1 scripts/nested-planner.sh launch` exited 1 with `error: current XDG_RUNTIME_DIR is the host runtime; refusing`; no planner record/identity. No direct-enrollment start, ID probe, focus, move, host/product/config/shortcut/workspace/output/Custom Tile/sudo/system-path action ran. One exact cleanup invocation failed closed on stale/unreadable supervisor `180008`; workdir preserved. Independent read-only inspection found all recorded PIDs absent, no private bus/socket, no planner/adapter/service records, no authoritative post-geometries, and host kwinrc SHA-256 unchanged from manifest. No red/green/blue `H[A,V[B,C]]` arrangement established. Next action for this slice: none; preserve the workdir, no retry/recovery. All prior residue/coredumps preserved.
+- 2026-09-06 terminal slice at run `poc3-d6284884-1a30-41f3-8a9e-b9e61701234f` (revision `2b10cca37d89b59d4ca68b7adfb569c4c90e96e9` plus pre-existing uncommitted staging): `cargo build --bins`, nested check, sole launch, manifest validation, sole diagnostic trio launch, `ready`, and manual validate passed. Manifest recorded private `dbus-run-session` `180008`/`17220528`, wrapped KWin `180011`/`17220528`, trio supervisor `182305`, clients `182313`, `182314`, `182315`; each `first-map 320x240`. Sole `NESTED_PLANNER_ALLOW=1 scripts/nested-planner.sh launch` exited 1 with `error: current XDG_RUNTIME_DIR is the host runtime; refusing`; no planner record/identity. No direct-enrollment start, ID probe, focus, move, host/product/config/shortcut/workspace/output/Custom Tile/sudo/system-path action ran. One exact cleanup invocation failed closed on stale/unreadable supervisor `180008`; workdir preserved. Independent read-only inspection found all recorded PIDs absent, no private bus/socket, no planner/adapter/service records, no authoritative post-geometries, and host kwinrc SHA-256 unchanged from manifest. No red/green/blue `H[A,V[B,C]]` arrangement established. Next action for this slice: none; preserve the workdir, no retry/recovery. All prior residue/coredumps preserved.
 
 ## Direct Enrollment Pivot (2026-09-06, static complete)
 
@@ -858,7 +856,7 @@ does not authorize recovery work, production migration, or a parity claim.
   exact next implementation step. No production/startup/host/Custom
   Tile/shortcuts/persistence/tray/KCM changes.
 - 2026-09-06 terminal direct-enrollment staging at
-  `/tmp/opencode/poc3-d6284884-1a30-41f3-8a9e-b9e61701234f`, revision
+  run `poc3-d6284884-1a30-41f3-8a9e-b9e61701234f`, revision
   `2b10cca37d89b59d4ca68b7adfb569c4c90e96e9` plus pre-existing uncommitted
   staging: `cargo build --bins`, nested check, sole launch, manifest
   validation, sole diagnostic-trio launch, readiness, and manual validation
@@ -895,7 +893,7 @@ does not authorize recovery work, production migration, or a parity claim.
    remain preserved. This correction does not authorize a live retry or
    establish live planner startup.
 - 2026-09-06 terminal exact-one-attempt slice at
-  `/tmp/opencode/poc3-live-7182a83fce094f1e8d499f938a4252de`, revision
+  run `poc3-live-7182a83fce094f1e8d499f938a4252de`, revision
   `2b10cca37d89b59d4ca68b7adfb569c4c90e96e9` plus pre-existing unstaged work:
   `cargo build --bins`, nested check, one launch, manifest validation, one
   diagnostic trio launch, `ready`, and manual validation passed. The retained
@@ -1089,7 +1087,7 @@ does not authorize recovery work, production migration, or a parity claim.
   above were made and covered by the focused suites.
 - Exactly one authorized read-only `bash scripts/poc3-host-pilot.sh baseline`
   succeeded. Receipt
-  `/run/user/1000/plasma-auto-tiler-host-pilot/baseline.json` records KWin
+  `baseline.json` records KWin
   owner `:1.9`, owner PID `3568836`, start tick `13991576`, direct MainPID
   `3568829`, boot ID `2e63db46-c4ae-4552-a899-fb864e3cbbc6`, and the exact
   `dnhnbjfygx79an8s30kif7iniawdnqc5-kwin-6.7.4` wrapper package. Launcher and
@@ -1101,11 +1099,11 @@ does not authorize recovery work, production migration, or a parity claim.
 
 - One authorized `POC3_HOST_PILOT_ALLOW=1 bash
   scripts/poc3-host-pilot.sh suspend` invocation succeeded. Its retained
-  `/run/user/1000/plasma-auto-tiler-host-pilot/suspend-receipt.json` records
+  `suspend-receipt.json` records
   `verdict: suspended`, exact plugin `plasma-auto-tiler-kwin`,
   `loaded_before: loaded`, `loaded_after: not-loaded`, `unload_reply: true`,
   and `verified_not_loaded: true`. The exact later-resume binding is its Nix
-  package `/nix/store/5z7pcqklpk9x037k9b933snc3a4zq6rw-plasma-auto-tiler-kwin-0.1.0`,
+  `plasma-auto-tiler-kwin-0.1.0` package,
   source `contents/code/main.js`, metadata SHA-256
   `ceb49666a22cd18afa8ab5381eb997df1608dbcfc1bd8049d45823757474903f`, and
   bundle SHA-256 `37688bc5df45ab82f0407fa788322aca364dd13f4c6fc10788f3eda09bbf5f58`.
@@ -1164,10 +1162,10 @@ does not authorize recovery work, production migration, or a parity claim.
   production reload action occurred. Production remains suspended under the
   valid receipt.
 - Final checkpoint: host trio staging succeeded with receipt
-  `/run/user/1000/plasma-auto-tiler-host-pilot/host-trio-receipt.json`.
+  `host-trio-receipt.json`.
   Receipt schema `poc3-host-trio-v1`; scope workspace
   `f18245bc-0b73-4cda-9647-091f85aab333`, output `eDP-1`, alias `scope-1`;
-  host `/run/user/1000` / `wayland-0`.
+  host runtime directory / `wayland-0`.
 - Supervisor PID/tick `3592922`/`23352227`; client PIDs/ticks
   `3592938`/`23352240`, `3592939`/`23352240`, `3592940`/`23352240`; app IDs
   `org.plasma-auto-tiler.poc3-diag-1/2/3`.
@@ -1187,13 +1185,13 @@ does not authorize recovery work, production migration, or a parity claim.
 ## Host Planner Initial-Layout Stage (2026-09-07)
 
 - The authorized planner launch attempt through the host-pilot planner delegate
-  stopped before context setup or process spawn. Exact command:
-  `POC3_HOST_PLANNER_ALLOW=1 bash scripts/poc3-host-planner.sh launch
-  /run/user/1000/plasma-auto-tiler-host-pilot/host-trio-receipt.json`.
-  Its terminal result was `error: required tool must be the exact Nix/devenv
-  executable: /etc/profiles/per-user/beefsack/bin/jq`. The script resolves the
+  stopped before context setup or process spawn. Command (receipt argument
+  redacted):
+  `POC3_HOST_PLANNER_ALLOW=1 bash scripts/poc3-host-planner.sh launch <receipt>`.
+  Its terminal result was a required-tool error naming the host `jq` outside
+  the Nix store. The script resolves the
   unset `JQ_BIN` using `type -P` and checks the literal path before spawn;
-  `/etc/profiles/per-user/beefsack/bin/jq` canonicalizes to the Nix-store jq
+  the host `jq` outside the Nix store canonicalizes to the Nix-store jq
   binary but does not satisfy that literal-path gate. No override or retry was
   used.
 - Before and after the failed attempt, baseline, suspend, and trio records
@@ -1201,7 +1199,7 @@ does not authorize recovery work, production migration, or a parity claim.
   `13991576`, direct-parent systemd identity for
   `plasma-kwin_wayland.service` MainPID `3568829`/tick `13991575`, and wrapped
   executable
-  `/nix/store/dnhnbjfygx79an8s30kif7iniawdnqc5-kwin-6.7.4/bin/.kwin_wayland_wrapper-wrapped`.
+  `bin/.kwin_wayland_wrapper-wrapped` from the host KWin 6.7.4 store package.
   Direct `/proc/3568836/exe` remains permission-denied; the existing
   receipt-bound direct-parent compound identity remains the accepted authority.
 - The suspend receipt remains `verdict=suspended`; live
@@ -1246,7 +1244,7 @@ does not authorize recovery work, production migration, or a parity claim.
 
 - The one authorized corrected planner-stage preflight,
   `POC3_HOST_PLANNER_ALLOW=1 bash scripts/poc3-host-planner.sh validate
-  /run/user/1000/plasma-auto-tiler-host-pilot/host-trio-receipt.json`, exited
+  <receipt>`, exited
   `1` before launch with `unit MainPID 3568829 does not match KWin PID
   3568836`, then `KWin systemd identity capture is ambiguous` and `KWin
   identity capture is ambiguous`. No launch, post-launch validation, planner
@@ -1291,14 +1289,14 @@ does not authorize recovery work, production migration, or a parity claim.
   incomplete mapping assertions, which were expanded to cover every 21/25
   identity field in both systemd and direct-parent planner state records.
 - Read-only pre-launch validation passed for
-  `/run/user/1000/plasma-auto-tiler-host-pilot/host-trio-receipt.json`: the
+  `host-trio-receipt.json`: the
   direct-parent KWin compound pin, suspended production, and exact live trio
   were valid; Planner had no owner or record. The expected direct-parent
   fallback emits the harmless rejected same-PID systemd diagnostic before its
   accepted direct-parent capture.
 - The one authorized launch attempt,
   `POC3_HOST_PLANNER_ALLOW=1 bash scripts/poc3-host-planner.sh launch
-  /run/user/1000/plasma-auto-tiler-host-pilot/host-trio-receipt.json`, exited
+  <receipt>`, exited
   `1` after writing only `host-planner.log` with
   `env: '--': No such file or directory`, then failed
   `could not capture planner executable identity`. No planner process identity,
@@ -1327,7 +1325,7 @@ does not authorize recovery work, production migration, or a parity claim.
 - One authorized planner launch succeeded. The retained planner state binds
   service `org.plasmaautotiler.Planner`, unique owner `:1.1481`, PID
   `3721096`, start tick `26266852`, and exact executable
-  `/home/beefsack/Development/plasma-auto-tiler/target/debug/plasma-auto-tiler`.
+  `target/debug/plasma-auto-tiler`.
   Post-launch planner and trio validation passed against the existing receipt
   scope `f18245bc-0b73-4cda-9647-091f85aab333` / `eDP-1`; KWin remains
   `:1.9`/`3568836`/`13991576` and production remains suspended.
@@ -1341,7 +1339,7 @@ does not authorize recovery work, production migration, or a parity claim.
 - Worker 1 did not invoke persistent POC3 `start`. Prevalidation typed planner
   readiness failed while Planner owner/PID/tick/exe `:1.1481` / `3721096` /
   `26266852` /
-  `/home/beefsack/Development/plasma-auto-tiler/target/debug/plasma-auto-tiler`
+  `target/debug/plasma-auto-tiler`
   was live: `EvaluatePoc3 status` returned `Call failed: Input/output error`.
   No retry or other lifecycle command ran. No initial layout succeeded.
 - KWin direct-parent identity remains owner `:1.9`, PID/tick
@@ -1349,7 +1347,7 @@ does not authorize recovery work, production migration, or a parity claim.
   `2e63db46-c4ae-4552-a899-fb864e3cbbc6`; live
   `isScriptLoaded("plasma-auto-tiler-kwin")` false and suspend verdict remains
   suspended.
-- Trio receipt `/run/user/1000/plasma-auto-tiler-host-pilot/host-trio-receipt.json`,
+- Trio receipt `host-trio-receipt.json`,
   scope `f18245bc-0b73-4cda-9647-091f85aab333` / `eDP-1`: supervisor
   `3592922`/`23352227`; slots 1-3 clients `3592938`, `3592939`, `3592940`,
   each tick `23352240`, with expected app IDs/slots; all live and
@@ -1491,7 +1489,7 @@ does not authorize recovery work, production migration, or a parity claim.
   afterward. No terminal or other PID was signalled; the old receipt and
   diagnostics remain preserved.
 - Current diagnostic-client and supervisor binaries were built and copied to
-  `/run/user/1000/plasma-auto-tiler-host-frozen/` as mode-555 content-addressed
+  frozen host staging as mode-555 content-addressed
   references. The current client hash is `c8750208...ef866b7`; the supervisor
   hash is `0d7586a6...50cb0`. The Rust fixture remains 4690 bytes with SHA-256
   `b7e7b865800e0f085610cf04a637a070d8ec01f7dde5c0bec13f508480a07257`.
@@ -1515,7 +1513,7 @@ exist first. Production remains suspended (`isScriptLoaded` false), Planner
 ## Host Start Checkpoint frozen3 (2026-09-07)
 
 - 2026-09-07 host start checkpoint, fail-closed before actuation. Frozen3 receipt
-  `/run/user/1000/plasma-auto-tiler-host-pilot/host-trio-receipt-frozen3.json`,
+  `host-trio-receipt-frozen3.json`,
   sha256 `46f127eff2b69f7840676e33a3e49745da2a90e27522e432429be39e7db9c279`,
   remained valid. KWin owner `:1.9`, PID/tick `3568836`/`13991576`, direct
   parent `3568829`/`13991575`; allowed systemd direct-parent fallback due
@@ -1534,8 +1532,8 @@ exist first. Production remains suspended (`isScriptLoaded` false), Planner
   bundle+sidecar sha
   `c0f312087dc1fd507e2690be67879c92638fc87d5896d339558fabebb0449487`, binds
   three IDs/ticks/app IDs/scope and start H[A,V[B,C]].
-- Sole start command stopped before loadScript with exact error
-  `error: required tool must be the exact Nix/devenv executable: /etc/profiles/per-user/beefsack/bin/jq`;
+- Sole start command stopped before loadScript with a required-tool error
+  naming the host `jq` outside the Nix store;
   no script ID, no Script0, run, unload, geometry/focus, latency/convergence,
   or consume harness. No regeneration/retry/recovery occurred. Reference
   expected projection is A `(0,0 446x600)`, B `(454,0 446x296)`, C
@@ -1577,7 +1575,7 @@ exist first. Production remains suspended (`isScriptLoaded` false), Planner
 
 ## Host Resize-Aware Isolated Namespace Run (2026-09-07)
 
-- Runtime namespace: `/run/user/1000/plasma-auto-tiler-host-poc-f57ae4eff231bc2fe6685fb44038cb2d`.
+- The host-POC run used a private runtime namespace.
   The launch receipt records KWin owner/PID/tick `:1.9`/`3568836`/`13991576`,
   direct-parent source, scope `f18245bc-0b73-4cda-9647-091f85aab333`/`eDP-1`,
   display `wayland-0`, and supervisor `509390`/`28326302`.
@@ -1636,7 +1634,7 @@ exist first. Production remains suspended (`isScriptLoaded` false), Planner
   `poc3-host-persistent`, and `poc3-host-poc-f57ae4eff231bc2fe6685fb44038cb2d`;
   `/Scripting/Script0` absent before and after.
 - Fresh trio receipt
-  `/run/user/1000/plasma-auto-tiler-host-poc-f57ae4eff231bc2fe6685fb44038cb2d/host-trio-receipt.json`:
+  `host-trio-receipt.json`:
   supervisor `509390`/`28326302`, clients slot 1 `509404`, slot 2 `509405`,
   slot 3 `509406`, all tick `28326312`, app IDs
   `org.plasma-auto-tiler.poc3-diag-1/2/3`. All four PIDs alive via `kill -0`
@@ -1699,13 +1697,13 @@ exist first. Production remains suspended (`isScriptLoaded` false), Planner
   absent. No fresh trio, geometry/focus write, bundle build, KWin shortcut
   script, KGlobalAccel action, or shortcut invocation occurred.
 - No keyboard POC setup is accepted. The exact prior trio receipt is
-  `/run/user/1000/plasma-auto-tiler-host-poc-f57ae4eff231bc2fe6685fb44038cb2d/host-trio-receipt.json`.
+  `host-trio-receipt.json`.
 
 ## Host Keyboard POC Setup Stop Block (2026-09-07)
 
 - The required exact stale-supervisor stop was attempted once with the recorded
-  receipt and pinned canonical jq:
-  `POC3_HOST_TRIO_ALLOW=1 JQ_BIN=/nix/store/xvd6920kffyyshg7mbw5wvfk6lg9wfkl-jq-1.8.2-bin/bin/jq bash scripts/poc3-host-trio.sh stop --runtime-dir /run/user/1000/plasma-auto-tiler-host-poc-f57ae4eff231bc2fe6685fb44038cb2d /run/user/1000/plasma-auto-tiler-host-poc-f57ae4eff231bc2fe6685fb44038cb2d/host-trio-receipt.json`.
+  receipt and pinned canonical jq (generalized: `JQ_BIN=<jq-executable>`):
+  `POC3_HOST_TRIO_ALLOW=1 JQ_BIN=<jq-executable> bash scripts/poc3-host-trio.sh stop --runtime-dir <runtime-dir> <receipt>`.
   It refused before any signal with `error: KWin unique owner drift detected;
   refusing ambiguous trio scope`.
 - Independent read-only verification found receipt-bound supervisor
@@ -1721,8 +1719,7 @@ exist first. Production remains suspended (`isScriptLoaded` false), Planner
   were correct. The moved active window retained focus; gaps were consistent;
   no unrelated windows visibly moved; and keyboard movement felt effectively
   instant, with no perceived delay.
-- Screenshot
-  `/home/beefsack/Pictures/Screenshots/Screenshot_20260907_172658.png` is
+- Screenshot `Screenshot_20260907_172658.png` is
   accepted user visual evidence of A full-height at left, B upper-right, C
   lower-right, bright pink wallpaper at exposed boundaries, and the purple
   native active border. It depicts the initial layout, not the later swap.
@@ -1785,8 +1782,9 @@ exist first. Production remains suspended (`isScriptLoaded` false), Planner
   `pat-live-resize-20260907-p554898`, and `pat-live-poc-20260907`; no recorded
   POC swap/action plugin was loaded. All exact recorded POC
   planner/supervisor/client processes were absent. It then resumed
-  `plasma-auto-tiler-kwin` from
-  `/nix/store/5z7pcqklpk9x037k9b933snc3a4zq6rw-plasma-auto-tiler-kwin-0.1.0/share/kwin/scripts/plasma-auto-tiler-kwin/contents/code/main.js`:
+   `plasma-auto-tiler-kwin` from
+  the `plasma-auto-tiler-kwin-0.1.0` store package
+  `share/kwin/scripts/plasma-auto-tiler-kwin/contents/code/main.js`:
   `loadScript` returned `2`, `run` succeeded, and `isScriptLoaded` returned
   true. This is operational resume evidence, not a new receipt or exact
   in-memory source-attribution proof. User windows were neither closed nor

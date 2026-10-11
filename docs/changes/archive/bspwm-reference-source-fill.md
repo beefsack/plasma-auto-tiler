@@ -3,7 +3,7 @@
 ## Goal and scope
 
 - Baseline `2028348`: attempt bspwm's 42 N and 20 U cells using read-only
-  `/home/beefsack/Development/bspwm` at
+  `upstream baskerville/bspwm repository` at
   `e11eff4cb3333216ad03c815609a4ed79e08929c`, confirmed from the matrix legend.
 - Documentation only. Preserve scenarios, other profiles, approved rules,
   source checkouts and the user's three stashes. No live testing.
@@ -47,7 +47,7 @@ follows every fill unit. The Lead owns this note and the triage report.
   geometric directional leaf swap with follow, no-follow desktop send;
   fullscreen vacates the retained tree leaf, sticky has no float guard.
   No maximize state, tab group or workspace tiling-off counterpart.
-- Temporary orientation evidence: `/tmp/opencode/bspwm-pass-orientation.json`.
+- Temporary orientation evidence: `bspwm-pass-orientation.json`.
 - Slice 1: 8 N + 2 U closed; 4 N reclassified F (FOC-03/04,
   INS-04/06). Review removed unnecessary absolute-frame/live blockers,
   completed cycle/internal-focus and fullscreen-newcomer chains. A fresh
@@ -139,8 +139,8 @@ excluded scenarios compare policy only; those cells were not changed or attempte
 - Exact changed occurrence set is all 62 baseline N/U candidates. Original
   F20/L8, resolved bspwm cells, other profiles, scenarios and approved rules
   are preserved. Reference cells remain 1,896; Ours remains 169 TBD.
-- Temporary executable evidence: `/tmp/opencode/bspwm-pass-final-reconcile.py`
-  and `/tmp/opencode/bspwm-pass-final-reconcile.json`. Post-archive integrated
+- Temporary executable evidence: `bspwm-pass-final-reconcile.py`
+  and `bspwm-pass-final-reconcile.json`. Post-archive integrated
   reconciliation: **77 assertions passed, zero failures**, independently rerun
   after integration. The final reviewer also reconciled the baseline durable
   N/U/F/L inventory, all index profile/notation text, exact eight-row/four-column

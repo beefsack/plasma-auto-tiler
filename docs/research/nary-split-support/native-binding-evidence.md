@@ -3,7 +3,7 @@
 ## Scope and source availability
 
 - Native source scope: `src/tiles/tile.h`, `src/tiles/tile.cpp`, and `src/tiles/customtile.cpp` from KWin `v6.7.3`.
-- Acquisition method: the locally present KWin output derivation resolves to `/nix/store/68d0m8wgjmghcvrwzhl8hrmdbdv0ikmb-kwin-6.7.3.tar.xz`. Its Nix derivation identifies the KDE `kwin-6.7.3.tar.xz` release archive and its recorded SHA-256 is `345b45d400884cc6b00f4b3585cc056aa2780f32afe2df394d20c5a98273c559`.
+- Acquisition method: the locally present KWin output derivation resolves to the upstream KDE `kwin-6.7.3.tar.xz` release archive. Its Nix derivation identifies the KDE `kwin-6.7.3.tar.xz` release archive and its recorded SHA-256 is `345b45d400884cc6b00f4b3585cc056aa2780f32afe2df394d20c5a98273c559`.
 - Commit verification: `git ls-remote` resolved `refs/tags/v6.7.3^{}` in `https://invent.kde.org/plasma/kwin.git` to `45ec9a6d0ed312a803ff5658a2a3e61f221566c6`. The release archive was extracted locally only for reading the three scoped files.
 - This document cites paths relative to the verified archive root, `kwin-6.7.3/`.
 
@@ -60,11 +60,11 @@
   `CustomTile.split(direction)`.
 - **Invalidated runtime observation (not an established fact):**
   `native-evidence-phase-2/attempt-01` launched exactly once through
-  `bash scripts/nested-kwin-spike.sh /tmp/opencode/native-evidence-phase-2-attempt-01-20260821T134535038363479/nested`.
+  `bash scripts/nested-kwin-spike.sh <nested-workdir>`.
   The launcher created the required fresh private XDG homes and private D-Bus
   session; its runtime directory was mode `0700`; and its command uses the
   absolute `/run/user/<uid>/wayland-0` display path. The private config copy
-  existed at `nested/config/kwinrc`. The nested compositor was held for more
+  `kwinrc` existed. The nested compositor was held for more
   than three seconds after the one structural call, and only the nonce-owned
   nested KWin and launcher processes were terminated.
 - **Invalidated runtime observation (not an established fact):** host
@@ -112,10 +112,9 @@
 
 - **Invalidated runtime observation (not a Runtime fact):** the final allowed
   `native-evidence-phase-2/attempt-02` launched exactly once through
-  `bash scripts/nested-kwin-spike.sh
-  /tmp/opencode/native-evidence-phase-2-attempt-02-20260821T035827482591912/nested`.
+  `bash scripts/nested-kwin-spike.sh <nested-workdir>`.
   The fresh private XDG homes, private D-Bus session, absolute host display
-  path, and runtime mode `0700` (owner UID 1000) were provided by the launcher.
+  path, and runtime mode `0700` (owned by the invoking user) were provided by the launcher.
   The nested process was
   retained from `2026-08-21T14:00:42,524518562+10:00` through
   `2026-08-21T14:00:46,616734623+10:00`, and its private config file exists at
@@ -134,8 +133,7 @@
   The probe was therefore not run: no root `tiles` decode, split, or 3-child
   structural result exists for this attempt. The exact command outputs,
   isolation measurements, private-config proof, probe input, and cleanup
-  result are retained at
-  `/tmp/opencode/native-evidence-phase-2-attempt-02-20260821T035827482591912`.
+  result are retained as evidence (paths dropped).
 - **Historical conclusion after attempt-02:** the candidate JavaScript binding
   contract was undetermined. The changed host hash independently prevented any
   Runtime fact, and the loader parse failure prevented this attempt from

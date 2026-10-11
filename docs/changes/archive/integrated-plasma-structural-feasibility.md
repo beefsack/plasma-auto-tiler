@@ -17,7 +17,7 @@ authority.
   was a proof carrier, not a production architecture or packaging selection.
 - Existing research pins KWin `45ec9a6d` (6.7.3). This verdict checks the relevant
   source at the requested `8438567a`; inspected local blobs under
-  `/tmp/opencode/kwin-8438567` matched revision-pinned GitHub raw SHA-256 values.
+  `upstream KWin source at pinned commit 8438567a` matched revision-pinned GitHub raw SHA-256 values.
   Older line references remain historical, not citations to the newer pin.
 - Offline reads only. No live action, diagnostic, harness run or residue work.
   [Attempt-01 artifacts](integrated-plasma-structural-feasibility/results/) are

@@ -2,8 +2,8 @@
 
 - Outcome: M01-M32 applied as authorized; documentation only, no code or live tests.
 - Authority: user choices 2026-10-08, merged findings
-  `/tmp/opencode/decision-review-merged-2026-10-08.md`, and the original
-  `/tmp/opencode/decision-review-findings-2026-10-08.md` coverage ledger.
+  `decision-review-merged-2026-10-08.md`, and the original
+  `decision-review-findings-2026-10-08.md` coverage ledger.
 - Register: organized across platforms by behavior; superseded intent removed,
   current implementation gaps qualified, duplicate contracts consolidated.
   Proof/history already present in existing records was not copied again.

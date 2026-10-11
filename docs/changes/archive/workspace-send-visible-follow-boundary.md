@@ -19,7 +19,7 @@
 
 ## Outcome And Evidence
 
-- The current `plan-1-w0` occurrence committed at `/tmp/dev.log:239` and logged
+- The current `plan-1-w0` occurrence committed at `dev.log:239` and logged
   `follow outcome=completed` at line 256, while the user observed the terminal
   on workspace 2 and the visible output on blank workspace 3. The log therefore
   proves neither physical visibility nor border causation.
@@ -52,7 +52,7 @@
 - This wrapper correction is not attributed to the reported visual symptom:
   its historical follow readback passed, and the exact occurrence already
   observes the mover and all target windows in target domain `5b55...` at
-  `/tmp/dev.log:240-243`. Source and log evidence do not identify a remaining
+  `dev.log:240-243`. Source and log evidence do not identify a remaining
   visible-switch cause. The smallest discriminating future diagnostics are the
   resolved target/current desktop ids and output, wrapper-identity result,
   logical-map order with KWin desktop numbers, and focus state immediately
@@ -141,7 +141,7 @@
   establish that an active workspace visit is required. Deferred hidden-window
   convergence remains one compatible explanation, alongside client constraints
   or other native state not exposed by this record.
-- The authorized `/run/user/1000/plasma-auto-tiler-dev.Aoekoz.log` does not
+- The authorized `plasma-auto-tiler-dev.Aoekoz.log` does not
   label which correlations were physically visible successes or failures, so it
   cannot correlate the reported intermittent visible failure to a particular
   flight. `plan-1-w0`, `plan-1-w1`, and `plan-1-w2` each reach the normal
@@ -182,4 +182,4 @@
 
 ## Closure
 
-- Subsequent USER VISUAL/MANUAL acceptance is: "The issue appears to be fixed, I spam moved a window between many workspaces and it never failed. ... reinforces ... graceful handling ... actually feel really good even when spamming." It accepts repeated same-session move/follow usability across many workspaces. The supplied `/run/user/1000/plasma-auto-tiler-dev.E2E0QJ.log` is NOT ANALYZED, so it does not alter this record's native-cause, protocol, or rendered-visibility limits.
+- Subsequent USER VISUAL/MANUAL acceptance is: "The issue appears to be fixed, I spam moved a window between many workspaces and it never failed. ... reinforces ... graceful handling ... actually feel really good even when spamming." It accepts repeated same-session move/follow usability across many workspaces. The supplied `plasma-auto-tiler-dev.E2E0QJ.log` is NOT ANALYZED, so it does not alter this record's native-cause, protocol, or rendered-visibility limits.

@@ -5,9 +5,9 @@
 - Milestone 1: `f767de8`, native ledger model/storage, Windows and Linux CI green.
 - Milestone 2 (`c25c7d6`): non-hooking lifecycle, standalone restore, exact-owner emergency
   stop, owned tagged test window and native development/proof loop.
-- Baseline: Windows 11 Pro x64 build 26200; one M27Q, `\\.\DISPLAY1`,
+- Baseline: Windows 11 Pro x64 build 26200; one display (model redacted), `\\.\DISPLAY1`,
   2560x1440 at 170 Hz, 125%, origin 0,0. Multi-monitor evidence belongs to the
-  other Windows PC; historical KDE display facts remain unchanged.
+  other Windows test system; historical KDE display facts remain unchanged.
 - Acceptance: four-package Windows build/test, fmt-all, strict clippy and
   whitespace; independent reveal/readbacks after graceful and forced owner loss;
   verified actor exit and no committed ledger or stop request at the end.
@@ -84,7 +84,7 @@
   - Justfile: `59DC899AF950C21D28A80465B661F54816237DD84620A79A980DB942F898DBB1`
   - Report: `5623F09456DBC5AE3AAF896E3B36A31438D862CC45F9091E57E35BB9BC82AD83`
   - Receipt: `10B570B41505EF81E5B13659748BB11B34AB26E9CC6642F8ED6151AB44398A24`
-- Medium RID 8192, same SID ending -1002, session 1. Preflight had no project
+- Medium integrity, same account, session 1. Preflight had no project
   actors/ledger/request. Display query: one primary DISPLAY1, 2560x1440 at 169 Hz,
   logical bounds 2048x1152 and work area 2048x1104, consistent with the accepted
   baseline; no independent fresh scale readback claimed.
@@ -156,7 +156,7 @@
 
 ### No-key machine evidence, 2026-10-01
 
-- Physical Windows build 26200, medium RID 8192, SID ending -1002, session 1.
+- Physical Windows build 26200, medium integrity, session 1 (account IDs dropped).
   No keys, synthetic input or focus-forcing were used; no physical shortcut
   acceptance is claimed.
 - Full entry point: 10:29:43-10:32:10 +10, report directory
@@ -215,7 +215,7 @@
 - One normal `just --justfile windows.justfile winarrow` hands-off rerun completed
   at `target/windows-winarrow/20261001-141827-29400`, source `c25c7d6` plus the
   recorded spike working tree. `machine.json` binds absolute payload paths,
-  SHA-256, SID ending -1002, session 1 and medium integrity RID 8192.
+  SHA-256, session 1 and medium integrity (account IDs dropped).
 - SHA-256:
   - Spike: `0D4B444A8256CD0DD876275A7D2F3203B842F1586EC5AADB672C6F5A1C604C76`
   - Helper: `B5B5CD0F245004B7A91258F97A9322477AD9F4A54A50E03507703047B2E677E6`
@@ -242,7 +242,7 @@
 
 ## Hook-only physical spike redesign, 2026-10-01
 
-- Comparison finding for this PC: all four Win+Arrow `RegisterHotKey` calls failed
+- Comparison finding for this test system: all four Win+Arrow `RegisterHotKey` calls failed
   with 1409 in runs `20261001-102943-27412`, `20261001-142510-31296`,
   `20261001-142831-34004` and `20261001-144119-29552`. Registration owner is
   unknown. Registration-only code, tests and launcher phases are removed.
@@ -294,7 +294,7 @@
   but simultaneous two-controller coordination is not. A single persistent
   driver capturing both controller results would close that evidence gap.
 - Both runs bind source `c25c7d6` plus the recorded working tree, session 1,
-  medium RID 8192 and absolute payloads in `machine.json`. SHA-256:
+  medium integrity and absolute payloads in `machine.json`. SHA-256:
   - Spike: `3403BB415D8C600A7BD5CFB6E6C0EB7638831EE2EBDD6561B9F6D88ACB623022`
   - Helper: `B23208593E0DE06FB637F463A8A73083632F72CD155A1C53D90895364B9D7D8E`
   - Launcher: `6D83411FEB126E1225E0A4FD05571CAAFE27E1C909024346F34171B08ED2429E`
@@ -310,7 +310,7 @@
   Report totals: delivered 17, consumed 34, acted 17, passed 0, dropped 0.
   Every Win release opened Start. HOOK OFF Win+Left produced native Snap and
   Snap Assist; cleanup was clean. This establishes arrow suppression/release on
-  this PC, but identifies the remaining lone-Win-tap menu defect.
+  this test system, but identifies the remaining lone-Win-tap menu defect.
 - Menu-mask choice: send an unassigned `vkE8` down/up pair with `SendInput` before
   forwarding physical Win-up, only after a consumed approved foreground chord
   in that Win hold and while the hook remains installed. Win-up itself passes.
@@ -360,7 +360,7 @@
   receipt and reported `aborted: external stop requested` (expected recipe exit 1).
   This closes the earlier two-controller handshake evidence gap.
 - Both runs bind source `c25c7d6` plus the recorded working tree, session 1,
-  medium RID 8192 and absolute payloads. SHA-256:
+  medium integrity and absolute payloads. SHA-256:
   - Spike: `DE002B3B002396EFD5F039F58DD6B3600CA9EC9A6711FBABE66C373F984BD8DF`
   - Helper: `607CC9E02629100FB021E2CA0A92F4F4F78A44BED36C8029601A43035B0E04E2`
   - Launcher: `6D83411FEB126E1225E0A4FD05571CAAFE27E1C909024346F34171B08ED2429E`
@@ -391,11 +391,11 @@
   ready report describes the earlier active owner. No new executable query was
   used for this reconciliation. Visual Start/no-Start and responsiveness findings
   come from the user; the log corroborates consumption, masking and actions.
-- WH_KEYBOARD_LL plus vkE8 masking has physical owned-helper evidence on this PC.
+- WH_KEYBOARD_LL plus vkE8 masking has physical owned-helper evidence on this test system.
   Selected for product Win+Arrow input on 2026-10-01: consume only approved
   chords, mask at Win key-up while Win is still held, retain non-Win defaults
   and opt-in. RegisterHotKey is rejected after all four chords returned 1409
-  on this PC (owner unknown). The harness remains experimental, with fixed
+  on this test system (owner unknown). The harness remains experimental, with fixed
   timers, disposable-helper gating and 48-pixel nudge actions.
 
 ## Portability follow-up, 2026-10-01
@@ -416,5 +416,5 @@
   journeys; the final physical acceptance covers rapid repeated presses, not
    held-arrow repeat events. Product integration remains Phase 2 work.
 - Linux workspace build/test/clippy and current-tree CI evidence remain pending.
-- Later game-disable, session/display transitions and second-PC geometry/DPI;
+- Later game-disable, session/display transitions and second multi-output test-system geometry/DPI;
   clean-runtime evidence in Phase 4.

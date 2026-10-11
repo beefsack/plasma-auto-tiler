@@ -48,13 +48,13 @@ Accepted real host compile proof (2026-09-20, current system):
 - Proof identity/paths (`scripts/nix-host-kwin-build.sh resolve`, read-only,
   no realization):
   - `host_bin=/run/current-system/sw/bin/kwin_wayland`
-  - `store_path=/nix/store/78pbwkmy3kkp91lbp2w43p0hcl87cqb8-kwin-6.7.5/bin/kwin_wayland`
-  - `derivation=/nix/store/bq1w35sxymkigmvrsi0j3vmpnc2vxgw6-kwin-6.7.5.drv`
-  - `dev_output=/nix/store/qa2kacf1gv0cl4ilc5i723qd1a2k1fj7-kwin-6.7.5-dev`
-  - `kwin_cmake_dir=/nix/store/qa2kacf1gv0cl4ilc5i723qd1a2k1fj7-kwin-6.7.5-dev/lib/cmake/KWin`
+  - `store_path=<host KWin 6.7.5 store package>/bin/kwin_wayland`
+  - `derivation=<host KWin 6.7.5 derivation (kwin-6.7.5.drv)>`
+  - `dev_output=<host KWin 6.7.5 dev output (kwin-6.7.5-dev)>`
+  - `kwin_cmake_dir=<host KWin 6.7.5 dev output>/lib/cmake/KWin`
   - `kwin_config=.../lib/cmake/KWin/KWinConfig.cmake`
-  - `identity=bq1w35sxymkigmvrsi0j3vmpnc2vxgw6-kwin-6.7.5`
-  - `default_build_dir=target/kwin-native-host-bq1w35sxymkigmvrsi0j3vmpnc2vxgw6-kwin-6.7.5-build`
+  - `identity=<host KWin 6.7.5 derivation identity (kwin-6.7.5)>`
+  - `default_build_dir=target/kwin-native-host-<kwin-derivation-identity>-build`
   - `default_stage_dir=target/kwin-native-effect-stage`
 - Proof artifacts (host-matched build dir, prior accepted compile):
   - `...-build/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so`
@@ -111,8 +111,8 @@ Accepted real host compile proof (2026-09-20, current system):
   dogfood (505), dev-loop (325), and dev-native (155) suites, the actual
   `just build-native-effect` staging route, and all 27 native CTest cases in
   the same host derivation environment. The staged active-border and
-  drag-oracle libraries both link `libkwin.so.6` with a RUNPATH beginning
-   `/nix/store/78pbwkmy3kkp91lbp2w43p0hcl87cqb8-kwin-6.7.5/lib`; their plugin
+   drag-oracle libraries both link `libkwin.so.6` with a RUNPATH beginning
+   `<host KWin 6.7.5 store package>/lib`; their plugin
    IDs are respectively `plasma-auto-tiler-active-border` and
    `plasma-auto-tiler-drag-oracle`.
 - User manual acceptance (2026-09-20): "It's working perfectly now and the

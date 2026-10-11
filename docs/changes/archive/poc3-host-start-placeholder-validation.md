@@ -36,7 +36,7 @@ frozen3 host `start` lifecycle exactly once.
   the exact retirement command is therefore a no-op.
 - Outcome: the first read-only frozen3 revalidation stopped before retirement,
   generation, `loadScript`, geometry, or focus mutation. The trio/planner
-  validator rejected `/etc/profiles/per-user/beefsack/bin/jq` because it is not
+  validator rejected host `jq` outside the Nix store because it is not
   the exact Nix/devenv executable. No retry occurred.
 - Actual rectangles, focus, latency, convergence, and visual state are
   unavailable because the start action did not run. Production and terminal

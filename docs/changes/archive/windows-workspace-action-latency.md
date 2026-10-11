@@ -33,8 +33,7 @@
 
 ## Accepted diagnosis, 2026-10-02
 
-- Baseline HEAD e3e0c32, clean tree. Trace:
-  `C:\Users\beefs\AppData\Local\plasma-auto-tiler\session-1\run-01dd520d16c9a125.log`.
+- Baseline HEAD e3e0c32, clean tree. Trace: `run-01dd520d16c9a125.log` (product session log).
 - Lines 113-123: send action tick 21 attempts target geometry at tick 23,
   writes zero with fullscreen-foreground veto, then writes at tick 24.
   Lines 196-208: source return/select tick 46 attempts three writes at tick
@@ -176,8 +175,7 @@
 
 - User reports very low latency, successful physical workspace select/send/follow
   and successful click-drag resizing. This is user visual/usability acceptance.
-- Read-only source:
-  `C:\Users\beefs\AppData\Local\plasma-auto-tiler\session-1\run-01dd52224782f10c.log`.
+- Read-only source: `run-01dd52224782f10c.log` (product session log).
   Six correlated down-edge action summaries carry successful native focus and
   action-path geometry/readback, with zero queue wait and no source/target veto.
 

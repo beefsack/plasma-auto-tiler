@@ -78,10 +78,10 @@ Revert restores KDE defaults for cleared non-project actions.
 - This docs unit ran no live bus, KWin, Plasma, or config mutation; no
   tests, staging, or commit.
 
-## Outstanding Live Checks (second PC, user-owned)
+## Outstanding Live Checks (second multi-output test system, user-owned)
 
 - Apply, Force (preview/confirm/revalidate/clear), and Revert on the
-  multi-output PC, including the reported Apply refusal and unknown/legacy
+  multi-output test system, including the reported Apply refusal and unknown/legacy
   holders: unproven.
 - Physical chords (`Meta+L`, `Meta+Esc` lock, `Meta+Alt+K/L`, `Meta+G`,
   `Meta+M`), exact Revert-to-default restoration, and interrupted-Force

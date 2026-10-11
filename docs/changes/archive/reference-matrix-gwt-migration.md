@@ -99,7 +99,7 @@
   platform bullets: 3 source and 37 documentation occurrences, zero UT extras.
   No citation keys were added or removed.
 - Integrated offline verifier passed: `python3
-  /tmp/opencode/verify_matrix_gwt.py --quiet`; checks include every scenario's
+  verify_matrix_gwt.py --quiet`; checks include every scenario's
   actual 14-profile count, exact reference/scrolling cells and fixtures,
   unchanged new blocks, citation multisets, anchors, links, ASCII and whitespace.
 - Independent Worker reviewed first-group and final cross-area diff samples:

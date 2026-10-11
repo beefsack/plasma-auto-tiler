@@ -9,7 +9,7 @@ whether that asymmetry is real. Supersedes the open questions in
 
 ## Method
 
-- Source: a prior KWin clone was found on disk at `/tmp/opencode/kwin-src`.
+- Source: a prior upstream KWin clone was found on disk.
   It is a **sparse checkout** (git sparse-checkout, 8% of files) but it
   contains the exact files needed (`src/x11window.{h,cpp}`,
   `src/window.{h,cpp}`, `src/waylandwindow.{h,cpp}`, `src/xdgshellwindow.cpp`,
@@ -20,7 +20,7 @@ whether that asymmetry is real. Supersedes the open questions in
   message "Update version for new release 6.7.3". All file:line citations
   below are from this tag.
 - The running KWin build on this host is
-  `/nix/store/kfacyll1bnh89q9aqbs54qjgda2c4hkm-kwin-6.7.3`; its
+  the installed KWin 6.7.3 store package; its
   `lib/libkwin.so.6.7.3` confirms the 6.7.3 patch level, matching tag `v6.7.3`.
 - Host facts checked directly (Q3): installed headers, nix store, and the
   nixpkgs 26.11 channel source (see Section 3).
@@ -142,7 +142,7 @@ public/plugin-facing Devel header set:
 (`src/CMakeLists.txt:20-25`) and exports a CMake package (`KWinConfig.cmake.in`,
 `KWinTargets.cmake` at `src/CMakeLists.txt:401,472`). Classes used by plugins
 are `KWIN_EXPORT`. Verified against the running binary:
-`nm -DC /nix/store/kfacyll1bnh89q9aqbs54qjgda2c4hkm-kwin-6.7.3/lib/libkwin.so.6.7.3`
+`nm -DC <kwin-6.7.3>/lib/libkwin.so.6.7.3` (generalized store-package placeholder; ran against the installed KWin 6.7.3 `libkwin.so.6.7.3`)
 shows exported text symbols `KWin::X11Window::blockGeometryUpdates(bool)`,
 `KWin::X11Window::configure(KWin::Rect const&)`,
 `KWin::X11Window::moveResizeInternal(...)`, `KWin::Window::moveResize(...)`,
@@ -158,7 +158,7 @@ KPluginFactory/IID-based (`PluginFactory_iid`, `src/plugin.h:19`;
   `share`).
 - nixpkgs **does** define a dev output: the system channel is nixpkgs 26.11
   (flake registry resolves `nixpkgs` to
-  `/nix/store/aiapnjc6w07cz0jxy8s3j8cg1vfh1k8b-source`). The kwin package
+  the nixpkgs channel source output). The kwin package
   (`pkgs/kde/plasma/kwin/default.nix`) uses `mkKdeDerivation`, which sets
   `outputs = [ "out" "dev" "devtools" ]` (`pkgs/kde/lib/mk-kde-derivation.nix:135-140`);
   the built kwin derivation records outputs `out`, `dev`, `devtools`, `debug`.

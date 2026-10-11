@@ -2,7 +2,7 @@
 
 - Goal: one maintained, source-checked index of important auto-tilers and local
   reference checkouts for functional-spec and host-integration research.
-- Scope: documentation and reference clones under `C:\Users\beefs\Development`.
+- Scope: documentation and reference clones in a local development directory.
   No product changes or live desktop tests. Existing checkouts are read-only.
 - Acceptance: desktop/type grouping, algorithm taxonomy, concise mechanisms,
   workspaces, licence, maintenance evidence, canonical upstream and local path

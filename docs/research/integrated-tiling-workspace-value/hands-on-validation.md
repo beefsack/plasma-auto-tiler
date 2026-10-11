@@ -20,15 +20,15 @@
 
 Local pinned source clones used (all verified at the exact pinned identities):
 
-| Repo | Pin | Local path (read-only) |
+| Repo | Pin | Source |
 |---|---|---|
-| Krohnkite (anametologin fork) | tag `0.9.9.2` = `1d7fd742edd58963c94a158217440b27dad963ef` | `/tmp/opencode/krohnkite-0.9.9.2` |
-| KWin | tag `v6.7.4` = `8438567a741826da8b7536a8b10eb3af8fc8820d` | `/tmp/opencode/kwin-6.7.4` |
-| cosmic-comp | `81cd5fdbaa41c3973369ae85bccf829137836e20` | `/tmp/opencode/cosmic-comp` |
+| Krohnkite (anametologin fork) | tag `0.9.9.2` = `1d7fd742edd58963c94a158217440b27dad963ef` | pinned read-only clone |
+| KWin | tag `v6.7.4` = `8438567a741826da8b7536a8b10eb3af8fc8820d` | pinned read-only clone |
+| cosmic-comp | `81cd5fdbaa41c3973369ae85bccf829137836e20` | pinned read-only clone |
 
 Upstream references fetched 2026-08-09 from
 `https://codeberg.org/anametologin/Krohnkite/` (issue tracker and git history).
-A personal clone at `/home/beefsack/Development/Krohnkite` (origin = codeberg
+An upstream `anametologin/Krohnkite` repository clone (origin = codeberg
 fork) was used read-only for `git merge-base`/`git log` ancestry checks.
 
 No relevant upstream Krohnkite test exists (the `0.9.9.2` tree and master

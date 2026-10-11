@@ -27,7 +27,7 @@
   only `plasma-auto-tiler:plan` records, including applied plan operations and
   recoverable `duplicate-window` rejections; it contains no resize-adapter,
   mismatch, disable, divergence, or eligibility event
-  (`/run/user/1000/plasma-auto-tiler-dev.qLvCX5.log:1-38`).
+  (`plasma-auto-tiler-dev.qLvCX5.log:1-38`).
 - The active plan adapter does not post-observe geometry after writes and does
   not disable after a failed flight: it clears the flight and can dispatch the
   next deferred operation (`kwin/src/plan-adapter.ts:1064-1188`). Therefore the

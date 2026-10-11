@@ -308,7 +308,7 @@
 - Exclude PaperWM.spoon as a separate input profile for this expansion: its ordered columns, slurp/barf and accordion stack duplicate the PaperWM model (`README.md`, `windows.lua`, `tiling.lua`). Platform Space/focus options alone do not meet the requested distinct-model test. Keep its checkout as optional corroboration.
 - Current Deferred wording excludes scrolling models; propose revising that exclusion in step 2 after format review. No change to it in this step.
 
-| Checkout under `/home/beefsack/Development` | Planning source pin | Proposed baseline and source route |
+| Checkout under a local development directory | Planning source pin | Proposed baseline and source route |
 |---|---|---|
 | niri | `ed22699d99462f61ab171472d3ea67e844ea580d` | Shipped `resources/default-config.kdl`: half-width default, 1/3-1/2-2/3 presets, centering never; `docs/wiki/Configuration:-Layout.md`; record display mode/rules before fill |
 | PaperWM | `8bf6dd264f60d6c0c402b63df7b424b888959a48` | Shipped extension preferences, ordinary right insertion and default focus mode as a proposed baseline; verify schema values in step 2. `README.md`, `tiling.js` Space/insertion/slurp/barf/FocusModes, `settings.js` |

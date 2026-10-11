@@ -52,8 +52,7 @@
 - Full gates: KWin 1216 tests / 172 suites, Rust workspace 1268 tests, native
   CTest 33/33; typecheck/bundle, clippy/fmt, portable and Linux Windows-allowlist
   build/test/clippy (1116 tests) pass. Nine offline shell suites pass (1713
-  counted assertions plus build-kpackage contracts); logs:
-  `/tmp/opencode/verify-D7-20261008/`. Verification's own Nix result symlink
+  counted assertions plus build-kpackage contracts); logs retained. Verification's own Nix result symlink
   initially tripped two shell fixture guards; removed only that symlink,
   reran both successfully. No code change or unresolved gate failure.
 - Decisions/spec/Ours reference cells, diagnostics and Windows handoff updated;

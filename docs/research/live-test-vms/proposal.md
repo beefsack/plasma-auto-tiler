@@ -8,7 +8,7 @@
 
 ## Pinned source and config inventory
 
-- Local checkouts below are under `/home/beefsack/Development/`; short SHAs match the matrix profiles. Resolve full commit IDs when authoring fetches; source pins and docs release baselines are distinct.
+- Local checkouts below are under a local development directory; short SHAs match the matrix profiles. Resolve full commit IDs when authoring fetches; source pins and docs release baselines are distinct.
 
 | Env | Local path | HEAD | Config anchor |
 |---|---|---|---|
@@ -112,7 +112,7 @@ referenceEnvs.<wm> = {
 
 - Method: no closure measurements were obtained; cached metadata was not available without evaluation/fetch work. These are reasoned planning ranges, not measured sizes. Replace them with closure metadata and `qemu-img info` during implementation. The previous 80-120 GiB reserve is replaced by slice-sized budgeting.
 - A has no guest-image cost; it still needs WM, fixture and observer package closures in the shared host store.
-- Laptop first slice, incremental NEW store (sharing with the host only reduces these WHERE locked package versions match; host Plasma Qt/KF6 reuse is conditional, not proven):
+- Test system first slice, incremental NEW store (sharing with the host only reduces these WHERE locked package versions match; host Plasma Qt/KF6 reuse is conditional, not proven):
   - i3+bspwm+sxhkd, Xephyr, xterm and observation tools: roughly 0.8-1.5 GiB new. sway+foot/wlroots adds roughly 0.7-1.5 GiB, giving the recommended i3+sway+bspwm slice roughly 1.5-3 GiB total, subject to Mesa/toolkit reuse.
   - xmonad is a later profile, not in that first slice; including its GHC/config compilation toolchain could bring the X11 set alone to roughly 1.5-3 GiB.
   - niri after that: roughly 0.5-1 GiB new (Rust runtime closure is small; most cost is its dependency tree deltas).
@@ -150,7 +150,7 @@ referenceEnvs.<wm> = {
 
 ## Slice decision and effort
 
-- Laptop-first slice: i3 (13) + sway (18) + bspwm (19) = 50 queued, at most 47 nested candidates (3x OUT-06 excluded), subject to exact fixtures. Shared observer family, roughly 1.5-3 GiB runtime-store growth, no guest images.
+- Test system-first slice: i3 (13) + sway (18) + bspwm (19) = 50 queued, at most 47 nested candidates (3x OUT-06 excluded), subject to exact fixtures. Shared observer family, roughly 1.5-3 GiB runtime-store growth, no guest images.
 - Next: niri in A with its shipped Alt fallback, then karousel/KWin in A under its single-screen profile. Build B when hotplug, unsupported topology, real session restore or graphics qualification is scheduled.
 - Scrolling-first alternative: i3 + sway + niri = 72 cells; pays nested-winit single-output limits early for column-model value.
 - Minimal-slice effort: roughly 8-14 authoring days (shared per-WM definition + nested launchers for 3 WMs + fixture pack + snapshot harness + pinned-source overrides); source/dependency incompatibilities could extend this. User live-test time is separate.

@@ -102,7 +102,7 @@ Workers use muse-spark, one active at a time. The Lead owns this note.
   the old absence claim.
   Preserve unknown user-tested versions and the distinction between policy
   evidence and runtime acceptance. Approved deliberate deviations remain intact.
-- Source access: some `/tmp/opencode` COSMIC/Hyprland/bspwm exports were
+- Source access: some COSMIC/Hyprland/bspwm temporary exports were
   empty or mismatched and were not accepted as pinned evidence. Workers used
   existing pinned citations, verified sibling checkouts where available, and
   pinned raw files for light checks. No sources were cloned or newly pinned.
@@ -623,7 +623,7 @@ and persistence/special-window slices; U cells were evaluated with their area.
   than the resolved main leg. Its N class is unchanged. Three secondary
   notes were corrected: Hyprland LAY-06 client timing, sway MOU-03's
   input-less fixture qualification, awesome SPC-03's unpinned app source.
-- Initial triage temporary evidence: `/tmp/opencode/reference-triage-inventory.json`,
+- Initial triage temporary evidence: `reference-triage-inventory.json`,
   twelve `reference-triage-<WM>.json` files, `reference-triage-aggregate.json`
   and `reference-triage-spot-check.json`. These are session artifacts, not
   repository dependencies; the durable classification ledgers are above.

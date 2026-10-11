@@ -63,7 +63,7 @@
   https://github.com/KDE/kwin/blob/v6.6.0/src/effect/effectwindow.cpp.
   A native namespaced QObject property is another store with object lifetime;
   script-side durable dynamic-property access was not established.
-- Additional inspected KWin source at `/tmp/opencode/kwin-src` has unverified
+- Additional inspected KWin source at the upstream checkout (6.7.3) has unverified
   pin provenance: `src/scene/windowitem.cpp:67,94-96` owns EffectWindow;
   `src/effect/effecthandler.cpp:1181-1198` unloads the effect, not the window;
   `src/window.cpp:62` creates a fresh UUID for a new window. This is supporting

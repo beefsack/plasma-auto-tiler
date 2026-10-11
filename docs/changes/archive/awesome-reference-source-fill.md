@@ -3,7 +3,7 @@
 ## Goal and scope
 
 - Baseline `1f9713d`: attempt awesome/tile's 50 N and 12 U cells using
-  read-only `/home/beefsack/Development/awesome` at
+  read-only `upstream awesomeWM/awesome repository` at
   `0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f`, confirmed from the matrix legend.
 - Documentation only. Preserve scenarios, other profiles, approved rules,
   source checkouts and the user's three stashes. No live testing.
@@ -151,8 +151,8 @@ These are reference differences, not authorization to change Ours.
   swap legend qualifier and made the post-array client-file citation explicit.
   INS-01 share wording now correctly states both prior clients halve their
   allocation (1/2 to 1/4), consistent with the independently verified frames.
-- Temporary executable evidence: `/tmp/opencode/awesome-final-reconcile.py`
-  and `/tmp/opencode/awesome-final-reconcile.json`. Archived integrated check:
+- Temporary executable evidence: `awesome-final-reconcile.py`
+  and `awesome-final-reconcile.json`. Archived integrated check:
   **111 assertions passed, zero failures**, rerun by the Lead.
 - Reference cells remain 1,896; Ours remains 169 TBD. Every per-WM partition
   and actual count, N-area row/column sum and exact awesome H/F/L ledger

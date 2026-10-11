@@ -112,7 +112,7 @@ K0 accepted 2026-09-30; test-only baseline needs no live checks. See the
 [coverage audit and gate evidence](../../changes/archive/portable-core-k0-baseline.md).
 K1 offline extraction completed 2026-09-30: `tiler-core::visual` owns pure
 policy, and the native header adapts Qt values through the existing effect FFI.
-User K1 laptop checks confirmed; multi-output PC checks deferred. See the
+User K1 single-output test-system checks confirmed; multi-output test system checks deferred. See the
 [implementation and handover](../../changes/archive/portable-core-k1-visual-policy.md).
 K2 and K3 deferred (user 2026-09-30) after the [boundary audit](../../changes/archive/portable-core-k2-settings-actions.md):
 the KWin script cannot call Rust in-process, so sharing settings, the action

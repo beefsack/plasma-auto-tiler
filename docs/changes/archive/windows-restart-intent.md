@@ -59,8 +59,7 @@
   Source base `e48aed1` + eight-file code/test diff SHA-256
   `FB50517DBA00427B8B76A43DC5A909C6C2C6EE911E2BE47530E59DE33CD71C55`,
   bound to the delivery commit; no later code changes.
-- Evidence:
-  `C:/Users/beefs/AppData/Local/Temp/opencode/item8-verify-normal-20261011/final-batched.json`,
+- Evidence: `final-batched.json`,
   SHA-256 `94E9FB50821DF6E0B2C3F6BDE45B2F835F49C8D85B92B33A260D50DFEBC6FBDA`.
   Owner generations PID20752/creation `01dd591c97827f7a`,
   PID32696/`01dd591ca1a5353a`, PID15432/`01dd591ca57c34e1`;

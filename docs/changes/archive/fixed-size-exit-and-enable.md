@@ -60,7 +60,7 @@
   Windows acceptance claimed. No Windows runtime edits required.
 - Nine offline shell suites pass: 1713 counted assertions plus build-kpackage
   contracts, after real Planner fixture and tray builds. No live operations.
-- Final logs: `/tmp/opencode/verify-D5-D6-final-20261008/`.
+- Final logs retained.
 - Decisions/spec/reference Ours cells and Windows handoff updated; D5/D6 P0
   sub-bullets removed, named user-owned live checks added. D7 remains pending.
 - Independent review found an opt-out fullscreen gate regression; it is now

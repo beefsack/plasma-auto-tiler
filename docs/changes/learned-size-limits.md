@@ -1,6 +1,6 @@
 # Learned size limits - reconciliation phase 2 (parked 2026-09-28)
 
-Status: parked by the user (2026-09-28, option A) pending PC evidence. The
+Status: parked by the user (2026-09-28, option A) pending multi-output test-system evidence. The
 unaccepted candidate is preserved on branch `wip/learned-size-limits` (commit
 "WIP: learned size limits (reconciliation phase 2, parked)"); its full
 change note is there.
@@ -18,8 +18,8 @@ change note is there.
 
 ## Why parked
 
-The recorded unexplained shortfalls are from the multi-output PC, not the
-laptop (laptop trace `~/Downloads/plasma-auto-tiler-dev.uE1S5n.log` shows only
+The recorded unexplained shortfalls are from the multi-output test system, not the
+single-output test system (test-system trace `plasma-auto-tiler-dev.uE1S5n.log` shows only
 1-2 px work-area settling). DP-6 writes of `8,52,2032,1092` were observed at
 `1920x1036`, and Ghostty-class requests of height 1092 held 1036. 1920x1036
 equals HDMI-A-2's work area (`2048,116,1920,1036`), which suggests the window
@@ -29,7 +29,7 @@ KWin's per-output constraint) rather than a client-chosen limit. Unproven; the
 
 ## Next action
 
-On the PC, capture a `just dev trace` with one tall tiled window on DP-6 and
+On the multi-output test system, capture a `just dev trace` with one tall tiled window on DP-6 and
 confirm its output, bounds and KWin constraints at the shortfall. If it is an
 output mismatch, fix that root cause and re-evaluate whether phase 2 is
 needed. Resume from the branch only if a genuine client-held limit remains.

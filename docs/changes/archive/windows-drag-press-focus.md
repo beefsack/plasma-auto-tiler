@@ -79,8 +79,7 @@
   `F40CF298BE764CF13F95A3F297B31BFAAF747A7D1CCAF719C5229D2685460390`.
   Lead's subsequent scoped-cleanup fixture correction is test-only; production
   live evidence remains applicable. Final native gates passed after correction.
-- Evidence root `C:/Users/beefs/AppData/Local/Temp/opencode/windrag-rdrag08-7809/`;
-  `evidence.jsonl` SHA-256
+- Evidence: `evidence.jsonl` SHA-256
   `858921AFF252BA923A0EAD13F8A41DCD29A3A905A076DC13775645FEC8392828`;
   `harness.ps1` SHA-256
   `70ECC2528AF6AD962272EEEBCC8449A4F9B02F530AD424D4B570EC17F82AC0B9`.

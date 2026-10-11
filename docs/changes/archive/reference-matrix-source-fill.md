@@ -23,7 +23,7 @@
 ## Acceptance and verification
 
 - Local source HEADs match matrix pins; KWin evidence uses KDE/kwin 8438567a
-  raw source or the existing /tmp/opencode/kwin-8438567 source tree.
+  raw source or the existing upstream KWin source tree at pinned commit 8438567a.
 - Independent muse-spark review rechecks a random sample of at least 15% of
   filled cells and at least 10 against sources. Fix errors; if a batch has
   more than one error, re-sample that batch.

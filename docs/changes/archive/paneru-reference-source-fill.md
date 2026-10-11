@@ -37,7 +37,7 @@ follow each fill unit. The Lead owns this note and the triage report.
 
 - Initial workspace clean at `c023391`; three user stashes present.
 - Orientation confirmed the matrix's full pin and clean sibling checkout at
-  `/home/beefsack/Development/paneru`. Layout is a strip of Single/Stack/native
+  `upstream karinushka/paneru repository`. Layout is a strip of Single/Stack/native
   Tabs columns. Directional swap is same-strip, with North/South-only display
   fall-through. AX/CG native outcomes remain host-owned where decisive.
 - Shipped bindings are empty; operations are configured explicitly. Admission
@@ -95,8 +95,8 @@ follow each fill unit. The Lead owns this note and the triage report.
   29 paneru keys are unique and all cell citations resolve. Diff whitespace
   and scope passed. Source checkout remains clean at the full pin and all
   three user stashes are intact. Documentation only; no live testing.
-- Final temporary evidence: `/tmp/opencode/paneru-final-reconcile-v2.py`
-  and `/tmp/opencode/paneru-final-reconcile-v2.json`. These supersede the
+- Final temporary evidence: `paneru-final-reconcile-v2.py`
+  and `paneru-final-reconcile-v2.json`. These supersede the
   rejected initial checker and are not repository dependencies.
 - Exact next action for this paneru source pass: none. No N/U areas remain;
   opaque macOS host policy, missing fixture inputs and live observations

@@ -3,7 +3,7 @@
 ## Goal and scope
 
 - Baseline `2287230`: attempt qtile/Columns' 37 N and 21 U cells using the
-  read-only checkout `/home/beefsack/Development/qtile` at
+  read-only checkout `upstream qtile/qtile repository` at
   `83c697a5621306c3586efca31867efcfa0482e2d`, confirmed from the matrix index.
 - Documentation only; preserve scenarios, other profiles, approved rules,
   source checkouts and the user's three stashes. No live testing.
@@ -39,7 +39,7 @@ follows each fill unit. The Lead owns this note and the triage report.
   `e9f14c588daafac4fa2e58b27b6f1f2c59bd12ee`,
   `7fe6c8d19da46d162ee8b5a941fa7b352a5084e3`.
 - Orientation reconciled 91 qtile TBDs: N37/U21/F25/L8; exact inventory
-  `/tmp/opencode/qtile-baseline-inventory.json`. No candidate duplicates.
+  `qtile-baseline-inventory.json`. No candidate duplicates.
 - Shared map: Columns/_ClientList, Group, Screen, Qtile manager/state,
   base/X11/Wayland windows and cores, Floating, shipped default config/keys.
   Columns initially active with Max available; two-column limit, insertion
@@ -121,8 +121,8 @@ convergence; excluded cells were not attempted or changed.
 - Exact changed-candidate set: all 58 baseline N/U occurrences. Original
   F25/L8, resolved qtile cells, scenarios and all other profiles preserved.
 - Post-archive integrated reconciliation: **818 executable assertions passed,
-  zero failures**. Evidence: `/tmp/opencode/qtile-final-rigorous-checker.py`
-  and `/tmp/opencode/qtile-final-rigorous-evidence.log`. Exact candidate and
+  zero failures**. Evidence: `qtile-final-rigorous-checker.py`
+  and `qtile-final-rigorous-evidence.log`. Exact candidate and
   full multiline preservation, actual twelve-WM counts/partitions, N-area
   row/column sums, exact fixture memberships, qtile H/F/L, links and pinned
   source ranges reconcile. References 1,896 cells / 623 TBD; Ours 169 TBD;

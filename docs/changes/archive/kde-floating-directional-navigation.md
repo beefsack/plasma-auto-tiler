@@ -7,7 +7,7 @@
   behavior stays unchanged. Windows implementation waits for the next PC session.
 - Deliver focus, then explicit stateless half-screen floating snaps. Stop before
   persistent half/quarter/maximize/transfer state or new transfer machinery.
-- No live KWin/Plasma testing; laptop acceptance is user-owned. Never modify or
+- No live KWin/Plasma testing; test-system acceptance is user-owned. Never modify or
   stage the user-owned `devenv.nix` change.
 
 ## Accepted source findings and design
@@ -83,7 +83,7 @@
   tests plus two real-Engine post-snap geometry-signal/reconcile tests.
 - Records: decisions, matrix R-FLT-07..11 and focus/snap variants, backlog.
 
-## Laptop live check (user-owned, pending)
+## Test-system live check (user-owned, pending)
 
 1. Use the normal user-owned development lifecycle to load this revision's
    script and rebuilt Planner together. On a tiled workspace, leave A/B tiled
@@ -91,7 +91,7 @@
 2. Focus F, press `Meta+Right`: G receives focus, never nearby tile B.
    Focus B, press `Meta+Left`: tile A wins and floats are skipped. Expected
    local float log: `plasma-auto-tiler:plan:focus-float-applied direction=right`.
-3. Leave only F floating. `Meta+Right` on the single-output laptop retains F:
+3. Leave only F floating. `Meta+Right` on the single-output test system retains F:
    `focus-float-retained direction=right reason=no-target`. Up/Down misses
    retain as well; no workspace cycle. If using adjacent horizontal outputs,
    a miss may focus that output's remembered eligible tile (`planned-applied`).
@@ -111,7 +111,7 @@
 
 ## Remaining cost and next action
 
-- Next action: user runs the laptop focus/half-snap/reconcile check above.
+- Next action: user runs the test system focus/half-snap/reconcile check above.
 - Windows: implement and verify native ordinary/sticky float focus and snaps
   in the next PC session; existing refusals remain there. Shared constructor
   compatibility edits set `float_subject: false`, without Windows behavior change.

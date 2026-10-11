@@ -94,8 +94,7 @@
   `F5BADB46FD316418008B5D81E95540619ABE91B390F2FEEBD46A1CE5EDCA3681`;
   Explorer-launched copy identical. Source base `f794cf9` + nine-file feature
   diff, bound to the delivery commit; no code changed after gates/live checks.
-- Successful resize run:
-  `C:/Users/beefs/AppData/Local/Temp/opencode/resize-verify/20261011-054729-27820/evidence.json`,
+- Successful resize run: `evidence.json`,
   SHA-256 `26753C20FC595C302467FBE9413911803F12FCB8CD8C23324D267CB42A3F30FD`.
   Phase-zero owner PID20256 creation `01dd58e7cd94ca95` independent stop/restore
   passed before effects. Exact scoped owner PID24768 creation
@@ -112,8 +111,7 @@
   writes. Project fullscreen exit restores the slot.
 - Eight additional inward presses verified the shrinking schedule, but did
   not reach the live minimum floor. Floor exhaustion is offline evidence only.
-- Successful Settings run:
-  `C:/Users/beefs/AppData/Local/Temp/opencode/settings-verify/20261011-055349-26792/evidence.json`,
+- Successful Settings run: `evidence.json`,
   SHA-256 `98EEBF20B398045649B7D3FC1E76C66A286AA4C86C01EE92DC53AC91441C1827`.
   Settings PID32456 creation `01dd58e8b092ecdb`, same artifact, exact-owned
   controls. All 8 resize rows available with defaults/unknown-owner notes.

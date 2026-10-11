@@ -12,7 +12,7 @@ acceptance evidence and makes no runtime claims.
 - Tag: `v6.7.3`.
 - Commit: `45ec9a6d0ed312a803ff5658a2a3e61f221566c6` (HEAD, detached).
 - Working tree at research time: clean (`git status` = clean, detached HEAD).
-- Checkout state note: `/tmp/opencode/kwin-src` is a sparse checkout. Only
+- Checkout state note: the upstream KWin source checkout is a sparse checkout. Only
   `src/` root files plus `src/effect/`, `src/input/`, `src/scripting/`,
   `src/wayland/` and the effects autotest trees are materialized. `src/tiles/`,
   `src/plugins/`, `src/core/`, and several other trees are tracked at HEAD but

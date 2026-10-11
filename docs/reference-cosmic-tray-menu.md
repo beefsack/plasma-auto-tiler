@@ -4,8 +4,8 @@
 
 - `[C-OBS-2]`: refers to direct visual observation of two local screenshot
   files, read by the agent's image tool during this research task:
-  - `Pictures/Screenshots/Screenshot_2026-08-20_12-46-44.png`
-  - `Pictures/Screenshots/Screenshot_2026-08-20_12-46-57.png`
+  - `Screenshot_2026-08-20_12-46-44.png`
+  - `Screenshot_2026-08-20_12-46-57.png`
   - Both captured 2026-08-20. Both show the COSMIC top panel with the same
     tray menu open (this project's window-tiling tray item), differing only
     in the state of the "Tile current workspace" toggle (on in the first

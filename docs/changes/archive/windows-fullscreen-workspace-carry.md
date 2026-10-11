@@ -65,8 +65,7 @@
   work [0,0,2560,1380], DPI120. Medium session-1 Explorer-parented owner
   PID20988 creation `01dd58d6210ab2c4`; phase-zero stop/restore PID21848.
   Exact owned Notepad identities, executable path, baselines, machine responses
-  and restoration are in the report under
-  `C:/Users/beefs/AppData/Local/Temp/opencode/ws-verify-fs10/20261011-034053-10296/evidence.json`.
+  and restoration are in the report `evidence.json`.
   Report SHA-256 `D22FF4847E60F07D4C1FB8DCBC8674B3FD43D44DDF0A8AA4DCBDB1DBD88A6823`.
 - Occupied-target numbered follow/stay and relative follow passed: B remains
   captionless at full-output bounds, A reflows, target C shares the Engine
@@ -75,8 +74,7 @@
   reports `focus-suppressed`, `focus_ms:0`; no explicit follow focus write.
   Later standalone select is the existing focus path, a distinct action.
 - Maximized numbered stay/follow regression and independent graceful
-  stop/restore passed in
-  `ws-verify-fs9/20261011-032100-30984/evidence.json` (initial fullscreen route
+  stop/restore passed in `evidence.json` (initial fullscreen route
   discovery blocked, zero fullscreen attempts). Final live cleanup: owner
   stopped/hooks released, ledger/requests absent, hidden apps revealed,
   settings absence and SPI arranging/pen35 restored, all three owned apps

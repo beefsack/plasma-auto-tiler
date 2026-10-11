@@ -136,7 +136,7 @@ reflowing neighbouring tiles.
   this does not establish the generated-plugin path or full L-01 acceptance.
 - 2026-09-07 instrumented one-gesture setup: bounded trace instrumentation now
   emits only tagged event classes, geometry, and refusal codes for shell
-  capture into one exclusive `/tmp/opencode` trace. Focused typecheck, 26
+  capture into one exclusive trace. Focused typecheck, 26
   pointer tests (including accepted/refused event sequence), and the pointer
   static check (141 assertions) passed. The exact existing
   `pat-pointer-resize-20260907-r571321` plugin was already absent and its

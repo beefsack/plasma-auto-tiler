@@ -5,14 +5,14 @@
 - Firefox accepts full-height admission and restart restoration; Ghostty's
   persistent short frame remains a separate native per-window constraint
   candidate.
-- The replaced `/tmp/dev.log` is `just dev trace`, not `just dev verbose`
+- The replaced `dev.log` is `just dev trace`, not `just dev verbose`
   output (`:2,83-84`). It records normal two-window `DP-6` same-scope
   reconcile replies at `:190-257` and writes Firefox back to the retained
   right-hand rectangle while the user holds the shared edge.
 - The trace has `drag-pull action=dispatch` at `:230,259`, but no callback,
   verdict, refusal, or `pointer-resize` plan. Ordinary reconciliation, not
   oracle routing, fought the held native resize and parked at `:209,256`.
-- The rebuilt-effect warning at `/tmp/dev.log:35-39` is an unconditional
+- The rebuilt-effect warning at `dev.log:35-39` is an unconditional
   `justfile:883` staging message, not current effect/service state.
 
 ## Correction

@@ -47,7 +47,7 @@
 
 ## Findings and pending checks
 
-- Phase 1 physically accepted LL hook/vkE8 on this PC; Phase 2 retains Engine
+- Phase 1 physically accepted LL hook/vkE8 on this test system; Phase 2 retains Engine
   and provides `TileLoop::reconcile_tick`/`apply_geometry` plus verified target
   revalidation. New action dispatcher belongs beside these in the owner loop.
 - Win+L remains unproven; no lock/secure-desktop experiment in this slice.

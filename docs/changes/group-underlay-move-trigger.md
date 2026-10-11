@@ -129,7 +129,7 @@
   Live runs belong to the user under `docs/live-kwin-testing.md`; this record
   authorizes no agent live mutation.
 - Evidence is source-backed, not live proof: inspected KWin checkout
-  `/tmp/opencode/kwin` is 6.7.3; project host/build references 6.7.5. Confirm
+  `upstream KWin source checkout` is 6.7.3; project host/build references 6.7.5. Confirm
   host signal timing, focus behavior and pixels during user verification.
 - At completion, promote the delivered lifetime, subject, readiness and resize
   rules to `docs/decisions.md`; record any user-approved scope change,
@@ -178,15 +178,14 @@
 | `cargo fmt --all -- --check` | Pass |
 | `cargo clippy -p tiler-core -p tiler-kwin-effect-ffi --all-targets -- -D warnings` | Pass |
 | `cargo test -p tiler-core -p tiler-kwin-effect-ffi` | Pass, including existing core chord/OR tests, FFI eligibility/readiness/match rotation and POD layout |
-| `just build-native-effect` | Pass: host `zvakw8z637f9ppaqlfwwp2z2566xn5wv-kwin-6.7.5`, all three plugins staged |
+| `just build-native-effect` | Pass: host-matched KWin 6.7.5 derivation, all three plugins staged |
 | Existing native C++ logic/group tests | Same host SDK, rebuilt `target/kwin-native-k1-test-build`; CTest `^native-effect-(logic|group-highlight)$`: 2/2 pass |
 | `npm --prefix kwin test` (includes script build) | 844/844 pass, 119 suites |
 | `npm run typecheck --prefix kwin` | Pass |
 | `git diff --check` | Pass |
 
-- Native provenance: resolved derivation
-  `/nix/store/zvakw8z637f9ppaqlfwwp2z2566xn5wv-kwin-6.7.5.drv`, exact dev output
-  `/nix/store/xb8ivhiq3sxnxjgz2ia0cl0c4kpf1570-kwin-6.7.5-dev`. Normal builder
+- Native provenance: resolved host-matched KWin 6.7.5 derivation (`kwin-6.7.5.drv`), exact dev output
+  (`kwin-6.7.5-dev`). Normal builder
   uses `BUILD_TESTING=OFF`; the existing testing-ON cache was checked against
   that same `KWin_DIR`, rebuilt inside its host derivation SDK with current
   project Cargo/rustc, then selected pure CTests ran. No new harness, system
@@ -202,19 +201,19 @@
 
 ### User-Owned Acceptance
 
-- Laptop: both Meta/Shift orders, either release and extra modifiers; Meta alone
+- Test system: both Meta/Shift orders, either release and extra modifiers; Meta alone
   hidden; held chord can show during resize; no assumption about initial hold
   before first passive signal.
-- Laptop: focused title-bar and native Meta+drag moves, stationary start, drop,
+- Test system: focused title-bar and native Meta+drag moves, stationary start, drop,
   Esc/cancel and subject close. Check arm cleanup, chord handoff/independence,
   projected source footprint, raising and simultaneous drop preview.
-- Laptop: delayed group acceptance and focus change during a move must never
+- Test system: delayed group acceptance and focus change during a move must never
   show the unrelated new focused group. Resize alone, floating/root-leaf,
   workspace transitions, applet focus, maximize and fullscreen remain suppressed.
   Confirm current loaded build, actual pixels and correlated `chord/move/vis`
   diagnostics; an accepted setter alone is not visual proof.
-- Multi-output PC: repeat on each scale/origin, cross-output dragging and
+- Multi-output test system: repeat on each scale/origin, cross-output dragging and
   workspace/anchor transitions, including negative origins where configured.
 - Follow `docs/live-kwin-testing.md`; all live cases are user-owned. C remains
-  parked. Next action: user laptop acceptance, then PC checks; await a separate
+  parked. Next action: user single-output test-system acceptance, then multi-output checks; await a separate
   scope decision before any unfocused-subject work.

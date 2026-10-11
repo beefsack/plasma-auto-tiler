@@ -18,7 +18,7 @@ existing reconfigure path and effect `kwinrc` group.
   controller coordination, fences, or optional-tool build gates.
 - Native build/CTest, KWin tests/typecheck, Rust tests/fmt/strict clippy,
   relevant shell suites and staging pass offline. Provide line deltas and a
-  concise user-owned laptop `just dev` live-check table. No live agent testing.
+  concise user-owned test system `just dev` live-check table. No live agent testing.
 - `docs/backlog.md`, `devenv.nix`, and research review are untouched.
 
 ## Mechanism and decision boundary
@@ -78,9 +78,9 @@ existing reconfigure path and effect `kwinrc` group.
   testing.
 - Accepted residual: the extension may paint over a non-group window's edge
   if that window is stacked below the anchor. Native visual output, exact
-  alpha, slide appearance and KCM hot-apply require the user's laptop check.
+  alpha, slide appearance and KCM hot-apply require the user's test system check.
 
-## Laptop live check (user-owned)
+## Test-system live check (user-owned)
 
 | Step (`just dev` after delivering rebuilt native effect in a fresh Plasma session) | Expected | Red flag |
 | --- | --- | --- |
@@ -93,7 +93,7 @@ existing reconfigure path and effect `kwinrc` group.
 `[kwin]` script lines are dispatch/queued evidence, not confirmation of native
 composition. No agent performed live KWin/Plasma testing.
 
-## 2026-09-29 Laptop Follow-up
+## 2026-09-29 Test-system follow-up
 
 - User saw the underlay only on workspace 2 in `FeTnf4`, then nowhere after a
   `just dev` restart in the same Plasma session (`y3jVs3`). The script kept

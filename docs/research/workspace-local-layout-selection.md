@@ -20,7 +20,7 @@ with native ownership.
 ## Pinned source roots
 
 Reference paths below are repository-prefixed, resolved under
-`/home/beefsack/Development/` at the listed pin (verified with
+a local development directory at the listed pin (verified with
 `git rev-parse HEAD`; all match the matrix pins). Product paths are relative
 to `plasma-auto-tiler` at `59572c7`. Findings are source-only, not live tests.
 

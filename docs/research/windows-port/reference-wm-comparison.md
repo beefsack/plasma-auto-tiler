@@ -195,7 +195,7 @@ Ours citations are local links labeled `file:lines @ a20e8e8`.
   whole-workspace displacement/return [tiling_sys.rs:172-267,9949-10167 @ a20e8e8](../../../crates/tiler-windows/src/tiling_sys.rs).
   Per-target DPI border scaling [active_border.rs:129-163 @ a20e8e8](../../../crates/tiler-windows/src/active_border.rs).
 - Gap/runtime unknown: our physical acceptance is single-monitor; parity 9 and
-  mixed-DPI acceptance belong to the other Windows PC. Legacy `display-0`
+  mixed-DPI acceptance belong to the other Windows test system. Legacy `display-0`
   constants do not describe the managed-workspace runtime.
 - Recommendation: investigate fresh DPI/frame readback after cross-output moves;
   Glaze's double-move is a candidate only if measurements justify it (L).
@@ -342,7 +342,7 @@ Ours citations are local links labeled `file:lines @ a20e8e8`.
    target; Whim supplies lifecycle prior art. Accept: preview equals committed
    drop; cleanup on cancellation, focus loss, output change and stop.
 3. (L) Parity 9: complete/verify existing multi-output routing, disconnect/return,
-   cross-monitor movement and mixed-DPI frame readback on the other PC.
+   cross-monitor movement and mixed-DPI frame readback on the other Windows test system.
    Accept: reproducible topology/DPI matrix; double-move only if needed.
 4. (M) Parity 10: agree strip/grid/taskbar presentation, then prototype named
    workspace indicators with separate focused/displayed state. Accept: click

@@ -60,7 +60,7 @@ their delivery is not evidence of macOS capability.
 
 ## Local source pins (workspace-specific checkouts)
 
-Sibling checkouts of `plasma-auto-tiler` under `C:\Users\beefs\Development`
+Sibling checkouts of `plasma-auto-tiler` in a local development directory
 (the `../../../../<repo>/...` links below resolve only in that workspace
 layout). SHAs are pinned checkout SHAs, read-only; no clones, checkouts,
 repairs, or external modifications were made. Dates are committer dates

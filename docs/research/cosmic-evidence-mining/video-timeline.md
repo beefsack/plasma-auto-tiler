@@ -273,7 +273,7 @@ below the top panel), split orientation, focus, extracted frame path.
 
 ## Extracted candidate-frame files (scratch, not in repo)
 
-All under `/tmp/opencode/cosmic-evidence-mining/unit-c1/frames/`:
+Retained COSMIC evidence frames (scratch, not in repo; paths dropped):
 
 - `f01_0.0.rgb`
 - `f02_0.566667.rgb`

@@ -48,10 +48,8 @@
   verified hide/reveal and retained minimize state. This is producer-path
   evidence, not a native history-chord result. Production ignores injected
   keyboard input; the marked-input proof path accepts helper windows only.
-- Evidence: `C:/Users/beefs/AppData/Local/Temp/opencode/item1-live-20261010/`
-  (`workspace-normal-report.json`, `stop-restore-proof.txt`,
-  `evidence-final.json`), and ignored
-  `target/windows-workspace-normal/20261010-215707-23332/`.
+- Evidence: `workspace-normal-report.json`, `stop-restore-proof.txt`,
+  `evidence-final.json`; ignored repo `target/` output.
 - Artifact `tiler-windows.exe` SHA-256:
   `30A86EF2A5B552BD3DB5DE2F0DE7AD5A5774B3423DF7426D7A1874B15864BDB2`.
   Source: `91db9d2` plus this piece's adapter diff. Host build 26300,

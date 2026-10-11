@@ -53,7 +53,7 @@ acknowledgement, and terminal result without exposing window data.
   route-diag tests, `scripts/route-diag-follow.test.sh` (22 checks), and
   `scripts/build-kpackage.test.sh` passed. `cargo clippy --all-targets` had no
   errors and only three pre-existing unrelated warnings.
-- A temporary KPackage build under `/tmp/opencode` passed without staging
+- A temporary KPackage build in a temporary directory passed without staging
   output. The read-only `scripts/route-diag-follow.sh` current-boot snapshot
   exited successfully and found no route-diag lines yet. It did not start a
   service, open D-Bus, or mutate KWin or Planner.

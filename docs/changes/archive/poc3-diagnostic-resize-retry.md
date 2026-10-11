@@ -105,7 +105,7 @@ host-only diagnostic trio layout retry for user observation.
   `f18245bc-0b73-4cda-9647-091f85aab333`, output `eDP-1`, work area
   `0,44 1536x980`. The old exact shortcut plugin `pat-live-poc-20260907` was
   unloaded and verified absent without direct KGlobalAccel changes. Persistent
-  `/tmp/opencode/pat-live-resize-20260907-p554898.js` (SHA-256
+  `pat-live-resize-20260907-p554898.js` (SHA-256
   `1a99ef8428467181aa639efb5945aeeda0dcd18d1362ec2a97b0b08fb252f03a`) loaded as
   `pat-live-resize-20260907-p554898`, returned Script object `/Scripting/Script0`,
   registered the four requested runtime chords, and read back initial

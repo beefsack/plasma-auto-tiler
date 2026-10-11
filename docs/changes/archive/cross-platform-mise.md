@@ -5,7 +5,7 @@
 - Adopt one root `mise.toml` for the already approved Windows/macOS tools,
   including Rust via rustup stable; retain Linux devenv/Nix and system libraries.
 - Update dependency guidance and both host runbooks; installations remain
-  user-owned. Do not install mise or dependencies on this PC.
+  user-owned. Do not install mise or dependencies on this test system.
 - Add proportionate hosted installation evidence. Consider pin comparison only
   where both managers actually pin the same tool.
 - Exclude product code, backlog/principles edits and live desktop testing.

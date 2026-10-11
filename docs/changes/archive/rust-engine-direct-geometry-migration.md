@@ -25,8 +25,8 @@ production behavior through incremental opt-in promotion.
   8px internal gaps; directional focus; B/C keyboard swap with retained focus;
   keyboard split-share resize and neighbor reflow; continuous pointer C resize
   with B reflow; and final move/resize distinction where B stayed fixed, C
-  followed the pointer, and C snapped back at release. Screenshot reference:
-  `/home/beefsack/Pictures/Screenshots/Screenshot_20260907_172658.png`.
+   followed the pointer, and C snapped back at release. Screenshot reference:
+  `Screenshot_20260907_172658.png`.
 - User reports no material jank, unrelated movement, focus/gap failure, or A
   movement. A rare single-frame pink-wallpaper flash is accepted as an observed
   sequential-geometry artifact, not proof of cause or atomicity.
@@ -651,7 +651,8 @@ production behavior through incremental opt-in promotion.
   stabilization.
 - POC cleanup completed 2026-09-07: exact temporary scripts unloaded and
   recorded POC processes were absent. Live source resolution selected
-  `/nix/store/5z7pcqklpk9x037k9b933snc3a4zq6rw-plasma-auto-tiler-kwin-0.1.0/share/kwin/scripts/plasma-auto-tiler-kwin/contents/code/main.js`;
+  the `plasma-auto-tiler-kwin-0.1.0` store package
+  `share/kwin/scripts/plasma-auto-tiler-kwin/contents/code/main.js`;
   `loadScript` returned `2`, `run` succeeded, and
   `isScriptLoaded("plasma-auto-tiler-kwin")` returned true. This is an
   operational resume observation, not a new receipt or exact in-memory source

@@ -101,11 +101,11 @@ kcmshell6 recovery contradicts current approvals.
   as unsupported: `git diff --numstat` is 62 added / 68 removed production
   lines (net -6), plus 132 added test lines; no test count changed.
 - Host-matched verification after the source change: `just build-native-effect`
-  passed for host KWin 6.7.5 (derivation
-  `zvakw8z637f9ppaqlfwwp2z2566xn5wv-kwin-6.7.5`); the Worker built the
+  passed for host KWin 6.7.5 (host-matched KWin 6.7.5 derivation); the Worker built the
   shortcut test in the matching derivation shell and ran focused
   `ctest -R native-effect-shortcut` (9/9); the Lead rebuilt the entire native
-  test target set with `nix develop /nix/store/zvakw8z637f9ppaqlfwwp2z2566xn5wv-kwin-6.7.5.drv --command bash -c 'cmake --build target/kwin-native-test-build && ctest --test-dir target/kwin-native-test-build --output-on-failure'`
+  test target set in the matching host derivation shell with generalized
+  `nix develop <kwin-derivation> --command bash -c 'cmake --build target/kwin-native-test-build && ctest --test-dir target/kwin-native-test-build --output-on-failure'`
   (27/27). `git diff --check` passed. No live KWin/Plasma testing or host
   configuration mutation occurred.
 - Outcome: AR14's focused read and compatible narrow deduplication are

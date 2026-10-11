@@ -26,9 +26,9 @@ authority adapter entries with the established normalized native ID.
 ## Verification
 
 - `npx esbuild "tests/engine-authority.test.ts" --bundle --platform=node
-  --format=cjs --target=es2020 --outdir="/tmp/opencode/authority-id-review" &&
+  --format=cjs --target=es2020 --outdir="authority-id-review" &&
   node --test --test-name-pattern="engine authority active identity by native id"
-  "/tmp/opencode/authority-id-review/engine-authority.test.js"` passed: 4/4.
+  "authority-id-review/engine-authority.test.js"` passed: 4/4.
 
 ## Outcome
 

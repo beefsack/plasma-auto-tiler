@@ -2,7 +2,7 @@
 
 ## Goal
 
-Fix the user-reported underlay disappearance on the laptop (2026-09-29):
+Fix the user-reported underlay disappearance on the test system (2026-09-29):
 workspace 2 only in `FeTnf4`, nowhere after a `just dev` restart in `y3jVs3`.
 Preserve the current group membership, stacking, colour, and visibility
 semantics. Add bounded effect-side group apply/anchor evidence without raw IDs.
@@ -17,12 +17,12 @@ semantics. Add bounded effect-side group apply/anchor evidence without raw IDs.
   with counts/reasons, redacted and transition-oriented; logging never gates
   painting. No new timers, polling, private API, or fallback path.
 - Host-matched native build/CTest, KWin tests/typecheck, Rust checks if changed,
-  diff/line deltas and a concise user-owned laptop live check. No agent live
+  diff/line deltas and a concise user-owned test-system live check. No agent live
   testing; leave `devenv.nix` and `docs/backlog.md` untouched.
 
 ## Investigation and approach
 
-- Long trace `~/Downloads/plasma-auto-tiler-dev.FeTnf4.log:3308-3312`
+- Long trace `plasma-auto-tiler-dev.FeTnf4.log:3308-3312`
   ends with a group setter submitted at native revision 60. After a `just dev`
   restart, `y3jVs3.log:848-852` still submits but reaches revision 19. Both
   script runs use the fixed `plan-1` generation from `kwin/src/entry.ts:55`.
@@ -36,7 +36,7 @@ semantics. Add bounded effect-side group apply/anchor evidence without raw IDs.
 - The first workspace-only symptom is not proven by the traces: they contain
   script `setter-submitted` but no native receipt, Meta or anchor outcome.
   Effect-side diagnostics will distinguish rejection from a missing/hidden
-  anchor or visibility gate on the next laptop run.
+  anchor or visibility gate on the next test system run.
 
 ## Outcome and offline evidence
 
@@ -61,7 +61,7 @@ semantics. Add bounded effect-side group apply/anchor evidence without raw IDs.
   stream was a real source-level bug and the new lines will distinguish it
   from the remaining workspace-specific possibilities.
 
-## Laptop live check (user-owned)
+## Test-system live check (user-owned)
 
 | Step | Expected `[kwin]` evidence and visual result | Red flag |
 | --- | --- | --- |

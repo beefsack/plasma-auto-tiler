@@ -17,6 +17,10 @@
   writes), read and follow [docs/live-windows-testing.md](docs/live-windows-testing.md).
   It does not grant mutation authorization.
 
+## Local-System Information
+
+- Never commit local paths or information about local machines (paths, host names, hardware/resource details); describe test conditions generically.
+
 ## Dependency Management
 
 - Linux: system and toolchain dependencies for this project are managed by

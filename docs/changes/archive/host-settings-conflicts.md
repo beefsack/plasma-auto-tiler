@@ -5,8 +5,8 @@
 Identify Plasma 6 host settings that interfere with the tiler, implement the
 approved settings-page controls offline, and research uninstall behavior.
 No live KWin mutation or host config writes were used for verification. Installed
-`kwin_wayland --version` and `plasmashell --version` both report 6.7.5. The laptop report
-(`~/Downloads/plasma-auto-tiler-dev.H28tD1.log` and user visual observation) is
+`kwin_wayland --version` and `plasmashell --version` both report 6.7.5. The test-system report
+(`plasma-auto-tiler-dev.H28tD1.log` and user visual observation) is
 native edge preview/move competing with our Meta-drag preview, followed by our
 correct retile; this research does not independently replay or attribute that
 log. Source defaults below are upstream 6.7.5, **not measured host values**.

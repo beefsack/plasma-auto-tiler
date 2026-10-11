@@ -67,7 +67,7 @@
   portable package allowlist on Linux 1175 passed; KWin 1308 passed across 188
   suites. Workspace/allowlist strict clippy, fmt, portable dependency/leak
   check, allowlist build, KWin typecheck/bundle and diff whitespace pass.
-  Logs: `/tmp/opencode/d05-cargo-test.log`,
-  `/tmp/opencode/d05r-win-test.log`, `/tmp/opencode/d05-kwin-test.log`.
+  Logs: `d05-cargo-test.log`,
+  `d05r-win-test.log`, `d05-kwin-test.log`.
 - No native source changed; no live testing. Existing stashes remain untouched.
   Offline scope is complete; pending native acceptance stays in the backlog.

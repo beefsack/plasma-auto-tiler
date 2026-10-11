@@ -3,7 +3,7 @@
 ## Goal and scope
 
 - Baseline `03d39ca`: attempt all sway N12/U24 cells using read-only
-  `/home/beefsack/Development/sway` at
+  `upstream swaywm/sway repository` at
   `1652c54b73f67df17b7b4ab0b0f7048204aa8104`, matching the matrix pin.
 - Documentation only. Preserve scenarios, profiles, approved rules, other WM
   cells, source checkouts and three stashes. No code or live testing.
@@ -35,15 +35,15 @@ Workers use `muse-spark`, one active at a time. The Lead owns records.
 - Both source checkouts clean; i3 pin also confirmed as
   `903bcd518df32b0e055b17f5da3f988a0187fd3d`.
 - Orientation and exact baseline inventory:
-  `/tmp/opencode/sway-i3-orientation.md`,
-  `/tmp/opencode/sway-i3-baseline-inventory.json`.
+  `sway-i3-orientation.md`,
+  `sway-i3-baseline-inventory.json`.
 - Stash identities: `81c2864883e8dfea439f37a61e6ce5ef8c77c3dc`,
   `e9f14c588daafac4fa2e58b27b6f1f2c59bd12ee`,
   `7fe6c8d19da46d162ee8b5a941fa7b352a5084e3`.
 - Tree/state slice: 7 N + 9 U closed, no reclassifications. Independent
   source review confirmed all 16 cells and legend ranges. Join appends last;
   perpendicular move inserts before the remembered child; fullscreen blocks
-  ordinary newcomer focus. Evidence: `/tmp/opencode/sway-slice1-review.md`.
+  ordinary newcomer focus. Evidence: `sway-slice1-review.md`.
 - Rejected comparison classification: the fill Worker proposed 14 rows, all
   convergence, OPEN or absent journeys. Independent review found no genuine
   approved-rule difference in that set; these belong in covered/OPEN notes.
@@ -98,8 +98,8 @@ comparisons do not authorize changes to Ours; excluded cells remain unedited.
 
 - Three independent slice reviews, corrected workspace recheck, final residual/
   comparison audit and separate added-comparison source review passed.
-- Integrated checker: `/tmp/opencode/sway-final-checker.py`; evidence:
-  `/tmp/opencode/sway-final-rigorous-evidence.log`: **618 assertions passed,
+- Integrated checker: `sway-final-checker.py`; evidence:
+  `sway-final-rigorous-evidence.log`: **618 assertions passed,
   zero failures/pending checks**. Checks cover exact 36-candidate
   occurrence scope/full multiline preservation, all WM partitions/counts,
   N-area/fixture ledgers, source pins/ranges, archive links/nine comparison rows,

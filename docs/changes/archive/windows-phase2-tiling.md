@@ -73,7 +73,7 @@
   and `mutation-run.log`; source `9946265` plus the recorded working tree.
   Owner SHA-256:
   `DC7E47F5F5A44125BFFB4A498E35A83F5164E9616CA0B9E8ECD6D87995C8DDAB`.
-- Physical baseline: Win11 Pro build 26200, medium RID 8192, session 1,
+- Physical baseline: Win11 Pro build 26200, medium integrity, session 1,
   one display, full bounds (0,0,2560,1440), work area (0,0,2560,1380),
   inset domain (8,8,2544,1364).
 - Launch arguments were lost: all three recorded owner invocations are

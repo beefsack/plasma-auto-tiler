@@ -12,7 +12,7 @@ the [core extraction audit](../cross-platform-core/extraction.md) now includes
 a three-host capability and sharing comparison.
 
 **Answer [user decision 2026-09-30]:** Windows 11 x64, developed on the
-physical Windows PC after KDE-first core extraction. Managed per-monitor
+physical Windows test system after KDE-first core extraction. Managed per-monitor
 workspaces are required for feature completeness. Win+Arrow is opt-in but
 must work for this user's feature-complete experience. Keep Win+L and a real
 underlay as experiments, with explicit Win+L opt-in and an accepted group
@@ -40,13 +40,13 @@ needs a first-class workspace gate, and Win+L needs a separate policy choice.
 
 Day-one native setup, governance decisions and verification: [Windows development environment](../../windows-dev-environment.md).
 
-Develop natively on the selected Windows 11 PC. It is also the historical KDE
+Develop natively on the selected Windows 11 test system. It is also the historical KDE
 multi-output host (DP-6 and HDMI-A-2); that historical assertion is unchanged,
 and the current single Windows display is not proof of a present wiring change.
-**Settled (user 2026-09-30):** this PC dual-boots
+**Settled (user 2026-09-30):** this test system dual-boots
 Windows 11 Pro x64 build 26200 and NixOS nixos-unstable. Develop on one display
-here (accepted M27Q baseline in the [runbook](../../windows-dev-environment.md));
-Windows multi-monitor work moves to the user's other Win11 PC. A VM is optional,
+here (accepted display baseline in the [runbook](../../windows-dev-environment.md));
+Windows multi-monitor work moves to the user's other Win11 test system. A VM is optional,
 not the safety net.
 
 - [V: W33] Install the official `rustup` MSVC x64 toolchain, Visual Studio
@@ -58,9 +58,9 @@ not the safety net.
   through Git; do not share `target/`, live settings, ownership receipts or
   compiled effects across operating systems. Windows and KDE cannot be tested
   concurrently: switch sessions deliberately and re-establish each OS
-  baseline. A separate Windows install/PC avoids rebooting but does not make
+  baseline. A separate Windows install/test system avoids rebooting but does not make
   Windows monitor IDs equal to KDE's DP-6 and HDMI-A-2. Verify the single Windows
-  display identity on this PC; verify multi-monitor identities only on the other Win11 PC.
+  display identity on this test system; verify multi-monitor identities only on the other Win11 test system.
 - [R: milestone 2] Windows-specific PowerShell justfile:
   `just --justfile windows.justfile dev` builds with
   `cargo build -p tiler-windows`, exits the verified dev owner, restores,
@@ -70,7 +70,7 @@ not the safety net.
   `just --justfile windows.justfile stop` exits the owner then independently
   restores owned windows. Hooks and overlays are not implemented yet. The existing root `justfile` sets `bash` globally
   and uses Linux-specific tools; do not route Windows through it unchanged.
-- [I] On the daily desktop, start with dedicated test apps where practical;
+- [I] On the daily-use system, start with dedicated test apps where practical;
   first experiments must not hide real user windows. Keep a desktop/Start
   recovery shortcut outside the hotkey hook: `tiler-windows restore` reads
   the owner-tagged visibility ledger and reveals only verified project-hidden
@@ -188,7 +188,7 @@ security path; an ordinary keyboard hook cannot replace it [V: W12].
 
 **Win+Arrow is a first-class acceptance gate [user decision 2026-09-30]:**
 the defaults remain non-Win, but this user depends on a reliable opt-in
-override. The early physical-PC spike must prove key-down/up delivery,
+override. The early physical test system spike must prove key-down/up delivery,
 suppression of Snap/Start side effects, reversal when disabled, operation
 with focus on normal windows and no game interference. Do not call the
 Windows experience feature-complete for them until the override passes a
@@ -521,20 +521,20 @@ called in its adapter; no KWin processes or effect library are transplanted.
 
 **KDE-first core extraction is Phase 0 [user decision 2026-09-30].** Windows
 development starts only after its KWin fixtures and applicable user live
-checks pass. Then use disposable owned apps on the physical Windows 11 PC;
+checks pass. Then use disposable owned apps on the physical Windows 11 test system;
 make restore/stop work before hiding an ordinary desktop window.
 
 | Phase | Goal / scope | Exit evidence | Throwaway spikes first | Effort / risk |
 | --- | --- | --- | --- | --- |
 | 0. KDE-first extraction | Move only proven portable policy; preserve current KWin behavior before Windows implementation. | KWin fixtures and user live checks for each extraction step, as specified in [extraction](../cross-platform-core/extraction.md); no Windows product build. | KWin pure-policy fixtures before edits; no Windows host mutation. | Medium / controlled KWin regression risk. |
-| 1. Physical host + input/recovery | Install Windows toolchain, record single-display baseline (this PC), prove independent restore command and Win+Arrow. | Native build, dev restart/log loop and verified kill/restore on owned windows. **Win+Arrow opt-in works on the user's physical Win11 PC** with Snap/Start suppression and reversal; otherwise user-specific feature completeness is blocked. | `RegisterHotKey` vs `WH_KEYBOARD_LL` all four Win+Arrows, key-up masking, game disable; forced-crash restore on owned windows. Win+L policy is deferred to Phase 4 Sandbox guest-only. | Medium / highest input risk. |
+| 1. Physical host + input/recovery | Install Windows toolchain, record single-display baseline (this test system), prove independent restore command and Win+Arrow. | Native build, dev restart/log loop and verified kill/restore on owned windows. **Win+Arrow opt-in works on the user's physical Win11 test system** with Snap/Start suppression and reversal; otherwise user-specific feature completeness is blocked. | `RegisterHotKey` vs `WH_KEYBOARD_LL` all four Win+Arrows, key-up masking, game disable; forced-crash restore on owned windows. Win+L policy is deferred to Phase 4 Sandbox guest-only. | Medium / highest input risk. |
 | 2. Window geometry | Wire Windows observation/actuation to the extracted Engine for normal windows; retain evidence-based convergence. | Owned apps then representative desktop apps tile/read back with DPI, focus, sleep, display change and Explorer restart; no game writes. | WinEvent dropped-event, DWM invisible-frame/min-size and UWP/owned-dialog probes; hook timeout detection. | Large / high. |
-| 3. Required workspaces + visuals | After visibility proof, implement per-monitor logical workspaces, borders, group visual and drop preview. | Two monitors with independent workspaces (other Win11 PC), trailing empty, taskbar/Alt+Tab/Task View accepted, crash recovery and gaming pass. True underlay **or approved outline fallback** works without shell pollution. | `ShowWindow` hide/reveal ledger and forced loss; underlay inserted behind group; owned/unowned tool HWND vs single custom-drawn monitor surface through Win+Tab, desktop switch, Explorer animation and fullscreen; private cloak only comparative. | Large / highest recovery and rendering risk. |
+| 3. Required workspaces + visuals | After visibility proof, implement per-monitor logical workspaces, borders, group visual and drop preview. | Two monitors with independent workspaces (other Win11 test system), trailing empty, taskbar/Alt+Tab/Task View accepted, crash recovery and gaming pass. True underlay **or approved outline fallback** works without shell pollution. | `ShowWindow` hide/reveal ledger and forced loss; underlay inserted behind group; owned/unowned tool HWND vs single custom-drawn monitor surface through Win+Tab, desktop switch, Explorer animation and fullscreen; private cloak only comparative. | Large / highest recovery and rendering risk. |
 | 4. Settings + distribution | Live apply, consented conflict/revert, tray, Store proof, signed manual install and updates. | Store package feasibility or documented installer-listing fallback; `winget` manifest, signed GitHub release, clean install/update/uninstall and owner restoration; user accessibility journey. **Win+Arrow remains a feature-complete exit gate.** | Packaged full-trust hook/startup/install test; Store certification preflight; Win32/tray UI; MSIX vs signed MSI/EXE updater channel; signing identity and SmartScreen. | Medium-large / high. |
 
 [I: W9] Test portable Rust behavior on Linux and Windows and headless
 contracts on hosted CI. Run owner-verified interactive journeys on the user's
-physical PC with project restore available, then physical/manual game, UAC,
+physical test system with project restore available, then physical/manual game, UAC,
 fast-user-switch, sleep and remote-desktop checks. A VM is optional for
 isolation, not assumed available. Hosted CI passing cannot prove hooks,
 fullscreen or anti-cheat compatibility.
@@ -543,7 +543,7 @@ fullscreen or anti-cheat compatibility.
 
 Windows 11 x64, managed-workspace release bar, shortcut defaults and
 Win+Arrow gate, explicit Win+L opt-in, group-outline fallback, KDE-first
-sequencing, physical-PC development and unsurprising distribution are user
+sequencing, physical test system development and unsurprising distribution are user
 decisions of 2026-09-30. The technology behind them still needs proof.
 
 | Status / decision | Options and consequences | Recommendation |
@@ -551,7 +551,7 @@ decisions of 2026-09-30. The technology behind them still needs proof.
 | Decided: OS and workspaces | [User 2026-09-30] Win11 x64; managed per-monitor workspaces before Windows or macOS feature-complete. | Tiling-only previews can precede the workspace gate. |
 | Decided: shortcuts | [User 2026-09-30] Non-Win defaults, proven opt-in Win+Arrow, explicit opt-in Win+L. Win+Arrow is required for this user's feature-complete experience. | Keep Win+L policy behavior as an unproven spike, not a promise. |
 | Decided: group visual | [User 2026-09-30] Test custom drawing and shell pollution; outline fallback accepted if the underlay fails. | Choose a renderer only after Task View/Alt+Tab evidence. |
-| Decided: development and distribution goal | [User 2026-09-30] Native physical Windows PC after KDE-first extraction; distribution should feel obvious. | Test Store MSIX alongside signed installer and winget, without promising MSIX certification. |
+| Decided: development and distribution goal | [User 2026-09-30] Native physical Windows test system after KDE-first extraction; distribution should feel obvious. | Test Store MSIX alongside signed installer and winget, without promising MSIX certification. |
 | Decided: elevated apps | [User 2026-09-30] Administrator apps stay unmanaged (floating) by default. | A future opt-in to run the tiler elevated may be considered; no UIAccess or elevated helper now. |
 | Decided: workspace model | [User 2026-09-30] KDE-first extraction stops before the logical workspace model. | Refine the core workspace shape during Windows visibility spikes, then extract with matching KWin fixtures. |
 | Open: Store implementation if both pass | [V: W39-W41; I] Store MSIX has Store signing/updates but differs in process/storage behavior; Store-listed MSI/EXE shares the manual installer and updater, but needs publisher signing and hosting. | Prefer MSIX only if desktop hooks, login, policy and recovery pass; otherwise list the signed installer. Resolve any user-visible updater/channel tradeoff with the user. |
@@ -571,10 +571,10 @@ policy-based Win+L and overlay stacking add separate UX risks.
 | Game latency/anti-cheat or fullscreen overlay | Critical; hook or HWND overlap on game | Physically measured exclusive/borderless/anti-cheat matrix, immediate event-gated disable, no overlay/writes while game active [V: W3,W22; I]. |
 | Private COM API churn | High; internal desktops/shell cloak changes | Avoid as required path; build matrix only for comparison [O: U1,U6]. |
 | Lost shortcuts / Start/Snap interference | High; Win chords conflict or silent LL removal | Non-Win defaults; hook matrix and recovery; explicit Fix/Revert with settings preimage [V: W3; I]. |
-| Win+Arrow override fails or hurts games | Critical for this user's feature-complete goal | Physical-PC hook/Snap/Start/game matrix before claiming support; non-Win defaults and immediate revert remain usable for previews [O: U3; I]. |
+| Win+Arrow override fails or hurts games | Critical for this user's feature-complete goal | Physical test system hook/Snap/Start/game matrix before claiming support; non-Win defaults and immediate revert remain usable for previews [O: U3; I]. |
 | Lock action disabled by Win+L policy | Critical; no remaining keyboard/API lock route | Deferred to Phase 4 guest-only Sandbox experiment; prove alternate lock, refresh timing, policy owner and exact revert there [V: W12; O: U12; I]. |
 | Underlay pollutes Task View or covers dialogs | High; shell includes overlay, topmost or non-contiguous members | Compare unowned/owned tool windows and custom-drawn per-monitor surface during Win+Tab and desktop switches; suppress failed visual and use approved outline fallback [V: W34,W35; O: U13; I]. |
-| Daily-PC recovery fails | Critical; hide/restart/shortcut loop strands desktop | Independent restore command and out-of-hook kill switch verified before real windows; disable startup for crash probes [I]. |
+| Daily test system recovery fails | Critical; hide/restart/shortcut loop strands desktop | Independent restore command and out-of-hook kill switch verified before real windows; disable startup for crash probes [I]. |
 | Store package lacks control or certification | High; hook/startup/Win+L policy refused | MSIX full-trust/startup/certification experiment, same signed MSI/EXE Store-listing fallback, channel-specific updates [V: W39-W44; I]. |
 | DPI/client refusal/UWP/mixed IL | High; geometry/readback mismatch | Per-monitor-v2, physical frame conversion, complete observation, explicit skip with reason, app matrix [V: W4,W16; I]. |
 | Explorer, sleep, RDP, fast-user switching | High; stale handles/work area | WTS/power/display/taskbar signals, fresh enumeration and controlled rebind, interactive VM/physical journey [V: W10,W13; I]. |

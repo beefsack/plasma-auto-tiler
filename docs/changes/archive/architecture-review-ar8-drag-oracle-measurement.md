@@ -40,7 +40,7 @@ record also captures the subsequent live evidence and the 2026-09-24 closure.
 
 ## Live evidence and interpretation
 
-- `/run/user/1000/plasma-auto-tiler-dev.v3rAzb.log:179,237,407,430,471,528,556,709,717,727,756,788`
+- `plasma-auto-tiler-dev.v3rAzb.log:179,237,407,430,471,528,556,709,717,727,756,788`
   has twelve correlated records, all with script finish frame equal to oracle
   final geometry and `ok-moved`. Several first later frames are the tiler's
   own reflow or snap-back rather than evidence of delayed client commits
@@ -48,7 +48,7 @@ record also captures the subsequent live evidence and the 2026-09-24 closure.
   the oracle in only one of the three strict single-edge measurements; the
   other two differ by 13 and 10 px (`:179,237,528`). No Esc or attributable
   size-increment-client case is established by this trace.
-- The newer `/run/user/1000/plasma-auto-tiler-dev.mJaVwg.log:130,157` records
+- The newer `plasma-auto-tiler-dev.mJaVwg.log:130,157` records
   a right-edge route (`grabbed=right+-`) with script finish equal to oracle
   final geometry. Lines `:288-293` and `:355-357` record two `cancelled=true`
   `no-change` verdicts without any pointer-resize plan. In the latter case,

@@ -12,10 +12,10 @@ research rather than live acceptance evidence.
 - Repository: `https://invent.kde.org/plasma/kwin` (KWin 6.7.3).
 - Tag: `v6.7.3`.
 - Commit: `45ec9a6d0ed312a803ff5658a2a3e61f221566c6` (HEAD, detached).
-- Local checkout used for spot-checks: `/tmp/opencode/kwin`, clean working
+- Upstream KWin source checkout used for spot-checks, clean working
   tree (`git status` = clean), full materialization. Verify with
-  `git -C /tmp/opencode/kwin rev-parse HEAD` and
-  `git -C /tmp/opencode/kwin describe --tags --exact-match HEAD`.
+  `git -C <kwin-checkout> rev-parse HEAD` and
+  `git -C <kwin-checkout> describe --tags --exact-match HEAD`.
 - Line numbers below are repository-relative at the pinned commit.
 - No runtime work, D-Bus access, script loading, or live-session interaction
   was performed during this research.
@@ -126,7 +126,7 @@ exposed at the workspace level as `windowStartUserMovedResized` /
 `EffectWindow` signals for effect plugins, not the scripting `Workspace` /
 `Window` surface.
 
-- Citation: `/tmp/opencode/kwin/src/effect/effectwindow.h:687` (start),
+- Citation: `src/effect/effectwindow.h:687` in the upstream KWin source (start),
   `:703` (`windowStepUserMovedResized`), `:710` (finish), at pinned commit
   `45ec9a6d0ed312a803ff5658a2a3e61f221566c6` (v6.7.3). `EffectWindow` is the
   effects API, distinct from the scripting `Window` wrapper that scripts
@@ -230,8 +230,8 @@ uses function-valued stub signals for the shipped bundle.
 
 ## Spot-Check Evidence
 
-All twelve supplied citation groups were checked against the pinned source at
-`/tmp/opencode/kwin` (HEAD `45ec9a6d0ed312a803ff5658a2a3e61f221566c6`, tag
+All twelve supplied citation groups were checked against the pinned upstream KWin source
+(HEAD `45ec9a6d0ed312a803ff5658a2a3e61f221566c6`, tag
 `v6.7.3`).
 
 | Citation | Checked | File/line evidence | Mismatch |

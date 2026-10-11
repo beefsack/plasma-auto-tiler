@@ -16,7 +16,7 @@ merge for UX, superseding the recorded split.
   the effect. No live KWin testing in this change.
 - Verify native build/CTest, KWin tests/typecheck, Rust workspace tests/fmt/
   strict clippy, shell suites and staging; provide production/test line deltas
-  and a concise laptop `just dev` live-check table.
+  and a concise test system `just dev` live-check table.
 - Update durable settings decision and obsolete tray target references after
   implementation. Leave `devenv.nix`, `docs/backlog.md`, and the architecture
   review untouched.
@@ -55,7 +55,7 @@ use one shared page implementation and two thin plugin factories.
   combined page is taller than the old individual pages; small-dialog
   scrolling/visibility needs user observation.
 
-## Laptop live check (user-owned)
+## Test-system live check (user-owned)
 
 | Step (`just dev`) | Expected | Red flag |
 | --- | --- | --- |

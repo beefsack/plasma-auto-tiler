@@ -3,7 +3,7 @@
 ## Goal and scope
 
 - Baseline `20cf430`: attempt Hyprland/Dwindle's 44 N and 17 U cells using
-  read-only `/home/beefsack/Development/Hyprland` at
+  read-only `upstream hyprwm/Hyprland repository` at
   `19fb395d45314960e6f79f17994a84094f1cd4f6`, confirmed from the matrix index.
 - Documentation only. Preserve scenarios, other profiles, approved rules,
   source checkouts and the user's three stashes. No live testing.
@@ -45,7 +45,7 @@ follows each fill unit. The Lead owns this note and the triage report.
   Dwindle uses pointer/active anchors, long-edge binary splits and pointer-half
   order; unfloat freshly admits; pin is float-only; default workspace sends
   follow, silent sends stay; workspace previous uses global history.
-- Temporary inventory: `/tmp/opencode/hyprland-baseline-inventory.json`.
+- Temporary inventory: `hyprland-baseline-inventory.json`.
 - Admission slice: 6 N closed, 2 N reclassified F (INS-04/06).
   Independent review traced the floating-close history self-inclusion:
   unmapped closing F is selected, then invalid-mapped focus clears to none.
@@ -138,8 +138,8 @@ geometry gives the same result; excluded cells were not changed or attempted.
   Reference cells remain 1,896; Ours remains 169 TBD.
 - Post-archive integrated reconciliation: **218 executable assertions passed,
   zero failures**. Evidence:
-  `/tmp/opencode/hyprland-final-rigorous-checker-v2.py` and
-  `/tmp/opencode/hyprland-final-rigorous-evidence-v2.log`.
+  `hyprland-final-rigorous-checker-v2.py` and
+  `hyprland-final-rigorous-evidence-v2.log`.
   Full multiline candidate/exclusion/other-WM/scenario preservation, non-Hyprland
   index text, all actual per-WM counts/partitions, N-area sums, exact fixture
   memberships and Hyprland H/F/L ledgers reconcile. Fixture ledger totals

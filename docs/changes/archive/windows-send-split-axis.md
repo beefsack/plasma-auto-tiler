@@ -57,10 +57,8 @@ Status: complete, 2026-10-03. Implementation: `c4a837b`.
 
 ## Current-artifact live evidence, 2026-10-03
 
-- Report: `C:\Users\beefs\AppData\Local\Temp\opencode\`
-  `ws-exact-20261003-134921-33236/ws-exact-report.json`.
-  Owner log: `%LOCALAPPDATA%/plasma-auto-tiler/session-1/`
-  `run-01dd52ea2dcb23be.log`. Source `61a09bc` plus this core repair;
+- Report: `ws-exact-report.json`.
+  Owner log: `run-01dd52ea2dcb23be.log` (product session log). Source `61a09bc` plus this core repair;
   owner SHA-256 `19B8BE7B8E27453B157C797225F24798C6CFF5B281F29DA1A19B7A684C395555`.
 - Normal desktop verified with visible taskbar and physical 2560x1380 work area.
   Fresh read-only queries at DPI 120: Notepad outer415x253 / visible401x246;

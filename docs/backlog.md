@@ -344,7 +344,7 @@ decisions of 2026-09-24 are under
   offline by skipping that activation over a focused float/sticky subject;
   faithful regression red/green, 846 KWin tests and all gates pass. User
   live re-check (2026-10-05): normal and sticky float focus correct
-  ([evidence](changes/archive/kde-post-windows-followups.md#laptop-re-check-user-owned)).
+  ([evidence](changes/archive/kde-post-windows-followups.md#test-system-re-check-user-owned)).
   Q8 offline repeat evidence delivered: second same-reference maximize/sticky
   native-change cycles, duplicate sticky notification convergence and one native
   attempt per delivered maximize callback; existing maximize/fullscreen/geometry
@@ -2673,7 +2673,7 @@ decisions of 2026-09-24 are under
   complexity must deliver more value than it costs. Phase 1 (shared
   foreground/hidden classifier, refresh classification logs) passed the
   user's live test at `062d707` (2026-09-28, "felt good and minimally
-  janky"; trace `~/Downloads/plasma-auto-tiler-dev.uE1S5n.log`). Quiet
+  janky"; trace `plasma-auto-tiler-dev.uE1S5n.log`). Quiet
   refresh outcomes were ~60% of refresh log lines. Phase 2 (learned limits)
   parked by the user (2026-09-28) after a candidate exceeded the complexity
   rule; preserved on branch `wip/learned-size-limits`; resumes only if the
@@ -2918,7 +2918,7 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   both tiled and floating origins. Hold/release Meta+M and Meta+Shift+G, record
   KGlobalAccel callback count/visible cycling and release/repress behavior.
   Physical repeat behavior remains TBD; these live checks stay user-owned.
-  [Original steps](changes/archive/kde-post-windows-followups.md#user-owned-laptop-checks),
+  [Original steps](changes/archive/kde-post-windows-followups.md#user-owned-test-system-checks),
   [offline record](changes/archive/kde-repeat-offline-fixtures.md),
   [discriminator](spec/reference-outcomes.md#r-max-04--r-flt-02-kde-held-key-discriminator).
 - B9 unfloat while maximized on KDE (offline delivered): intentionally float

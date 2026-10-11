@@ -3,7 +3,7 @@
 ## Goal and scope
 
 - Baseline `7ed5a19`: attempt niri's 41 N and 12 U cells using the read-only
-  checkout `/home/beefsack/Development/niri` at
+  checkout `upstream YaLTeR/niri repository` at
   `ed22699d99462f61ab171472d3ea67e844ea580d`, confirmed from the matrix index.
 - Documentation only; preserve scenario wording, profiles, approved rules,
   other WM cells, source checkouts and the user's three stashes. No live testing.
@@ -39,7 +39,7 @@ follows each fill unit. The Lead owns this note and the triage report.
   `e9f14c588daafac4fa2e58b27b6f1f2c59bd12ee`,
   `7fe6c8d19da46d162ee8b5a941fa7b352a5084e3`.
 - Orientation confirmed the clean source pin and exact N41/U12/F6/L5
-  inventory: `/tmp/opencode/niri-baseline-inventory.json`.
+  inventory: `niri-baseline-inventory.json`.
 - Shared map: scrolling/column, workspace/monitor/layout, floating, input
   grabs, window open classification, default KDL bindings, IPC Action inventory.
 - Admission slice: 13 N closed. Independent review corrected the rejected
@@ -123,8 +123,8 @@ exist despite in-fixture convergence; fixture-bound outcomes stay TBD.
 - Exact changed-candidate set: all 53 baseline N/U occurrences. Original
   F6/L5, resolved niri cells, scenarios and all other profiles preserved.
 - Post-archive integrated reconciliation: **615 executable assertions passed,
-  zero failures**. Evidence: `/tmp/opencode/niri-final-rigorous-checker.py`
-  and `/tmp/opencode/niri-final-rigorous-evidence.log`. Exact full multiline
+  zero failures**. Evidence: `niri-final-rigorous-checker.py`
+  and `niri-final-rigorous-evidence.log`. Exact full multiline
   candidate/exclusion scope, actual twelve-WM counts and class partitions,
   N-area row/column sums, fixture memberships (292 cells across 92 rows),
   niri H/F/L ledgers, local links, pinned citation ranges and eleven comparison

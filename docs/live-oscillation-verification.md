@@ -22,7 +22,7 @@ document. It is the authoritative operational contract; this document does
 This document has two parts:
 
 - **Single-output scenarios (A, B, C)** - runnable on any machine, including
-  a single-output laptop.
+  a single-output test system.
 - **Multi-output scenarios (MO-1 through MO-5)** - require at least two
   physically or virtually connected outputs; MO-2 and MO-3 need three. Do
   not attempt these on a single-output machine. Run them later, on hardware
@@ -155,7 +155,7 @@ devenv shell --impure -- bash scripts/dogfood-install.sh enable
 
 ## Single-output scenarios
 
-These run on any machine, including a single-output laptop.
+These run on any machine, including a single-output test system.
 
 ### Scenario A - rapid repeated shortcuts, no occupation
 

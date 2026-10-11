@@ -42,8 +42,7 @@ Status: complete, physically accepted including populated-workspace send,
 
 - Earlier Paint query: outer minimum 880x625, visible 864x617. Paint held
   2032x617 against 2032x543, producing 66px overlap. Notepad outer 415x253,
-  visible 401x246. Source:
-  `C:\Users\beefs\AppData\Local\Temp\opencode\minprobe3-20261002-142326\probe.jsonl`.
+  visible 401x246. Source: `probe.jsonl`.
 - Probe default initialization was broken by PowerShell struct-copy semantics;
   do not carry that defect into Rust. Current inset conversion lives in
   `crates/tiler-windows/src/tiling.rs`.
@@ -64,8 +63,7 @@ Status: complete, physically accepted including populated-workspace send,
   mismatch; the direct cast repair restored the gates. No KDE/core source
    changes. Current-artifact live evidence is below; send was pending at that
    stage and was subsequently physically accepted (see closure).
-- Gate transcript:
-  `C:\Users\beefs\.local\share\opencode\tool-output\tool_0fb2522fd001uQtBi2PMJ7Ut4j`.
+- Gate transcript: `tool_0fb2522fd001uQtBi2PMJ7Ut4j`.
 - Initial live Worker dispatch failed three times before starting, each with
   backend temporarily overloaded; no desktop experiment ran in that session.
    Subsequent Workers ran successfully; send acceptance was pending then.

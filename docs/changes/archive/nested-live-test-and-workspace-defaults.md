@@ -1,7 +1,7 @@
 # Nested live-test proposal and workspace defaults
 
 - Status: complete and archived 2026-10-07.
-- Goal: document laptop-sized nested/VM reference environments and correct workspace send/follow comparisons to shipped bindings.
+- Goal: document single-output-sized nested/VM reference environments and correct workspace send/follow comparisons to shipped bindings.
 - Scope: research proposal, reference workspace outcomes, consensus, and R-WS-01 functional requirement.
 - Non-goals: implementation, live testing, builds, dependency changes, governance files, commits, and pushes.
 - Acceptance: shared per-WM design; sourced nested feasibility and shortcut handling; qualified resource estimates and queue routing; shipped-default tallies and alternate verbs; user decision reflected in the requirement; documentation checks pass.

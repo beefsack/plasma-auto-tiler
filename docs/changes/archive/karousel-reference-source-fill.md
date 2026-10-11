@@ -37,7 +37,7 @@ follow each fill unit. The Lead owns this note and the triage report.
 
 - Initial workspace is clean at `f04511c`; three user stashes are present.
 - Orientation confirmed the full matrix pin and clean sibling checkout at
-  `/home/beefsack/Development/karousel`. KWin's `/tmp/opencode/kwin-8438567`
+  `upstream peterfajdiga/karousel repository`. The upstream KWin source at pinned commit 8438567a
   is an export, not a git checkout; host citations use pinned raw URLs.
 - Unit 2: 11 N attempted; 2 closed (INS-08, FOC-01), 9 F
   (INS-01..07, COL-01, LAY-06). Independent review rejected unfinished
@@ -84,7 +84,7 @@ follow each fill unit. The Lead owns this note and the triage report.
   pinned raw URLs and introduce no duplicate keys. Source checkout is clean
   at the full pin and the three user stashes remain intact.
 - Temporary final verification evidence:
-  `/tmp/opencode/verify-karousel-accept.py` and its output. This supersedes
+  `verify-karousel-accept.py` and its output. This supersedes
   the earlier KAR-only `verify-karousel-final.py` check; the final parser
   preserves repeated MOV-01/03 main/swap occurrences. No acceptance gaps
   remain within the authorized N/U source-pass scope.

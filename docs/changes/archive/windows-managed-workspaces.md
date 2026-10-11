@@ -17,7 +17,7 @@
   single-monitor owned-helper and approved ordinary-app automated evidence,
   independent mutation/recovery review, standard gates and hosted CI.
 - Multi-monitor behavior is implemented conservatively but physical acceptance
-  belongs to the other Windows PC. Indicator/tray, visuals, proper settings UI,
+  belongs to the other Windows test system. Indicator/tray, visuals, proper settings UI,
   Win+L, games and secure desktop remain outside this change.
 
 ## Approach and bounded units

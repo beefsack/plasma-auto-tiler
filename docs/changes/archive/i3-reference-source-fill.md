@@ -3,7 +3,7 @@
 ## Goal and scope
 
 - Baseline `431039f`: attempt all i3 N13/U22 using read-only
-  `/home/beefsack/Development/i3` at
+  `upstream i3/i3 repository` at
   `903bcd518df32b0e055b17f5da3f988a0187fd3d`, matching the matrix pin.
 - Documentation only; preserve scenarios, profiles, approved rules, other WM
   cells, source checkouts and three stashes. No code or live testing.
@@ -31,8 +31,8 @@ Workers use `muse-spark`, one active at a time; Lead owns records.
 ## Accepted evidence
 
 - Shared orientation and original inventory:
-  `/tmp/opencode/sway-i3-orientation.md`,
-  `/tmp/opencode/sway-i3-baseline-inventory.json`. i3 text is unchanged by sway.
+  `sway-i3-orientation.md`,
+  `sway-i3-baseline-inventory.json`. i3 text is unchanged by sway.
 - Sway discoveries passed forward: criteria can reach hidden workspaces;
   hotplug focus listeners must be traced; per-output Given history can omit
   a global history projection; explicit `0` is a different target, not a no-op.
@@ -107,8 +107,8 @@ cells unedited and do not claim missing fixture outcomes.
 
 - Three independent slice reviews and corrected-source rechecks completed;
   final audit verified latest cleanup/relational closure and comparison scope.
-- Integrated checker `/tmp/opencode/i3-final-checker.py`, evidence
-  `/tmp/opencode/i3-final-rigorous-evidence.log`: **730 assertions passed,
+- Integrated checker `i3-final-checker.py`, evidence
+  `i3-final-rigorous-evidence.log`: **730 assertions passed,
   zero failures/pending checks**. It covers all 35 occurrence scope,
   full multiline preservation, source ranges/pins, all WM partitions/counts,
   zero N-area rows/columns, exact fixture membership/ledgers, eleven comparisons,

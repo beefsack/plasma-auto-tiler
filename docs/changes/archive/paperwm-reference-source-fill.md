@@ -75,7 +75,7 @@ follow each fill unit. The Lead owns this note and the triage report.
   keys. Triage tables and ledgers reconcile (N436/H58/F186/L104/U180;
   fixture 186 cells across 66 rows). Diff whitespace/scope checks passed;
   source checkout is clean at the pin and three user stashes are intact.
-- Verification artifacts: `/tmp/opencode/verify-final-v1.py` through
+- Verification artifacts: `verify-final-v1.py` through
   `verify-final-v4.py` (temporary, occurrence-aware matrix/scope/citation and
   triage checks, not repository dependencies). No acceptance gaps remain
   within the authorized N/U source-pass scope.

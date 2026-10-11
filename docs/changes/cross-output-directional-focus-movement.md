@@ -89,7 +89,7 @@ Restore the documented COSMIC output-edge behavior for `Meta+Arrow` focus and
 ## Incident Correction
 
 - The user-reproduced trace at
-  `/run/user/1000/plasma-auto-tiler-dev.qQMfPr.log` proves the first rightward
+  `plasma-auto-tiler-dev.qQMfPr.log` proves the first rightward
   R4 was planned and natively mutated (`p3`, lines 37-49): output and all three
   changed geometries echoed, but no `r4-desktops-echo` arrived. The timeout sent
   `directional-move-ack` with `adapter-lost` (lines 51-52 and 63), terminally
@@ -122,7 +122,7 @@ Restore the documented COSMIC output-edge behavior for `Meta+Arrow` focus and
 
 ## Geometry-Fence Correction
 
-- The supplied `/run/user/1000/plasma-auto-tiler-dev.kjFKIE.log` records the
+- The supplied `plasma-auto-tiler-dev.kjFKIE.log` records the
   `plan-1-p3` left transfer requesting the correct DP-6 rectangles: the mover
   and target Ghostty are both `1012x1092` at lines 24 and 41-42. Output and
   same-workspace desktop readback both completed (lines 38-39), but the first
@@ -155,7 +155,7 @@ Restore the documented COSMIC output-edge behavior for `Meta+Arrow` focus and
 
 ## Local Geometry Incident
 
-- `/run/user/1000/plasma-auto-tiler-dev.nEimw8.log` is a local R1 move, not an
+- `plasma-auto-tiler-dev.nEimw8.log` is a local R1 move, not an
   output crossing: `plan-1-p4` requests two-domain observation but replies with
   three DP-6 rectangles only (lines 49-50), then writes only DP-6 windows
   (lines 55-59). Rust still synchronously commits the local tree before the

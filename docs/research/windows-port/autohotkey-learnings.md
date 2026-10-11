@@ -1,6 +1,6 @@
 # AutoHotkey learnings for Phase 2 (Engine-driven tiling)
 
-- Clone: `C:\Users\beefs\Development\AutoHotkey`, revision `d8f819c16c08a61a605a746b3e6cc18fadee6c03` (2026-09-12). Techniques studied only; no code copied (GPL).
+- Clone: upstream AutoHotkey repository at revision `d8f819c16c08a61a605a746b3e6cc18fadee6c03` (2026-09-12). Techniques studied only; no code copied (GPL).
 - Scope: what AHK source/comments genuinely show about moving, filtering, focusing, hooking, and monitor/DPI handling. Gaps describe searched-path results, not universal claims.
 
 ## Highest-value learnings

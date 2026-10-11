@@ -74,7 +74,7 @@
   33/33 CTest pass, including KCM predicate/default/retired-token contracts.
 - All nine offline shell suites pass after bundle/planner build (1713 counted
   assertions plus build-kpackage contracts). No live operations performed.
-- Full initial gate logs: `/tmp/opencode/verify-D1-20261008/`; review corrections
+- Full initial gate logs retained; review corrections
   reran affected KWin, full workspace Rust, clippy and fmt successfully.
 - Decisions, functional spec, matrices, logging docs and Windows handoff updated;
   D1 backlog sub-bullet removed, D5/D6/D7 and migration D8 retained, KDE UI live check added.

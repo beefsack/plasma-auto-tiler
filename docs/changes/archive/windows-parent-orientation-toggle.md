@@ -65,7 +65,7 @@
 - 2026-10-11 physical Windows 11 Pro build 26300, DISPLAY1 primary full
   `[0,0,2560,1440]`, work `[0,0,2560,1380]`, DPI 120, medium 8192, session 1;
   owner Explorer-parented, scoped to new Notepad HWNDs only.
-- Evidence: `C:/Users/beefs/AppData/Local/Temp/opencode/ws-verify14/20261011-022558-27344/evidence.json`.
+- Evidence: `evidence.json`.
   Source base `755aab8` + delivery diff SHA-256
   `95002BBE573BA97BC887B35BF7C0D1BFC1F52C5B272A122FFD387091D58CA937`;
   copied artifact `bin/tiler-windows.exe` SHA-256

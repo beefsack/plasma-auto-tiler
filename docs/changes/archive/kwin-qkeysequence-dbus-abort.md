@@ -15,7 +15,7 @@ state or attributing a library fault to a caller without stack evidence.
 
 ## Established Evidence
 
-- `coredumpctl info 294764` identifies `/nix/store/dnhnbjfygx79an8s30kif7iniawdnqc5-kwin-6.7.4/bin/.kwin_wayland-wrapped`, PID `294764`,
+- `coredumpctl info 294764` identifies the host KWin 6.7.4 store package executable `bin/.kwin_wayland-wrapped`, PID `294764`,
   at `2026-09-12 19:41:24 AEST`, `SIGABRT`, `SI_TKILL`, boot
   `92256fedfc644803bf6d35fab46527d3`. The retained compressed core is present.
 - The aborting main-thread backtrace is:
@@ -79,7 +79,7 @@ state or attributing a library fault to a caller without stack evidence.
   script calls only the Planner and Tray services. These source facts exclude a
   repository path matching the inbound malformed call, but cannot identify its
   actual sender.
-- The final project dev log is `/run/user/1000/plasma-auto-tiler-dev.0L9vAz.log`,
+- The final project dev log is `plasma-auto-tiler-dev.0L9vAz.log`,
   mtime `18:53:10`; its final two lines are:
 
   ```text
@@ -98,7 +98,7 @@ state or attributing a library fault to a caller without stack evidence.
   journal says `The Wayland connection broke. Did the Wayland compositor die?`
   and starts a new compositor. Their ordering establishes that they did not
   cause KWin's abort.
-- The seven `/tmp/recon-build/bin/plasma-auto-tiler-shortcut-reconciler-test`
+- The seven `plasma-auto-tiler-shortcut-reconciler-test`
   cores at `19:06-19:10` all ran `malformed`, faulted reading `0x18`, and were
   built before the current source and before the on-disk binary replaced them.
   GDB reports every core may not match that binary. The current `malformed`
@@ -117,8 +117,7 @@ state or attributing a library fault to a caller without stack evidence.
   malformed inbound `(ai)` `QKeySequence` payload. It does not establish which.
   Capturing the sender, object path, interface, member, and raw signature before
   libdbus aborts would be needed for positive attribution.
-- The repeated reconciler faults most likely came from the replaced
-  `/tmp/recon-build` harness or an in-progress experiment, rather than HEAD;
+- The repeated reconciler faults most likely came from a replaced temporary test-harness build or an in-progress experiment, rather than HEAD;
   the pre-HEAD binary and source are unavailable, so that provenance cannot be
   proved.
 

@@ -27,5 +27,5 @@ Deliver the user's 2026-09-28 decisions: a healthy authenticated tray snapshot r
 
 ## Live acceptance remaining
 
-- Laptop: after Home Manager activation and a fresh graphical login, verify exactly one tray name/SNI, Active with an authenticated KWin snapshot, NeedsAttention after snapshot loss, restart after a tray process failure, a second invocation's clean exit, and clean stop on logout without a restart loop. Run `just dev` while the packaged tray owns the name and confirm it leaves that owner untouched.
-- Multi-output PC: restart KWin while Planner survives, verify all-new IDs fresh-adopt per output without left/right swaps or unwanted changes to other domains, and check surviving shared-ID domain topology under script reload; verify tray owner/status across the restart.
+- Test system: after Home Manager activation and a fresh graphical login, verify exactly one tray name/SNI, Active with an authenticated KWin snapshot, NeedsAttention after snapshot loss, restart after a tray process failure, a second invocation's clean exit, and clean stop on logout without a restart loop. Run `just dev` while the packaged tray owns the name and confirm it leaves that owner untouched.
+- Multi-output test system: restart KWin while Planner survives, verify all-new IDs fresh-adopt per output without left/right swaps or unwanted changes to other domains, and check surviving shared-ID domain topology under script reload; verify tray owner/status across the restart.

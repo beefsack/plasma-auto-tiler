@@ -82,18 +82,17 @@
   (8192), session 1, Explorer-parented, scoped to newly opened Notepad HWNDs
   only. Each evidence report contains exact PID/start/path/user/session and
   frozen app identities. Pre-existing terminal/windows excluded.
-- Evidence root: `C:/Users/beefs/AppData/Local/Temp/opencode/`. All paths below
-  end in `evidence.json`; source base `553c65b` plus this delivery diff.
+- Evidence: per-run `evidence.json` reports (local paths dropped). Source base `553c65b` plus this delivery diff.
 
 | Evidence run | Agent-observed native outcome |
 | --- | --- |
-| `ws-verify2/20261010-231830-21952`, `ws-verify3/20261010-232038-6140` | History 1->2->3->2->3; same-view no-record; stay does not record, follow does. Numbered/relative sends and sole-source stay no setter. |
-| `ws-verify7/20261010-233825-19968` | Maximized numbered/relative stay with source MRU A, target hidden; relative follow; unchanged maximized rect on arrival, native unmaximize returns target allocation. Genuine trailing/first selection wrap without creation. |
-| `ws-verify8/20261010-234703-6604` | Both intents across both floating boundaries, floating frames stable, only tiled side reflows. Future-only default seeding and restoration observed. |
-| `ws-verify9/20261010-235132-30112` | Ten simultaneously occupied workspaces plus trailing empty, genuine 11-ID ring; selection beyond 9 and both wraps. |
-| `ws-verify10/20261010-235950-24064` | Native Settings 83 rows, Keep/Disable/Rebind Apply and saved-file Revert. |
-| `ws-verify11/20261011-001937-14704` | Numbered stay Win+Ctrl+Shift+F6, relative stay Ctrl+Shift+F7, history Ctrl+F8 Apply; unbound Keep distinct from Disabled; staged Revert file unchanged. |
-| `ws-verify12/20261011-002153-15304` | Passed checkpoints: ordinal-10 relative next fills pre-transfer spare; first relative previous stay fills pre-transfer trailing and retains MRU K; next spare appears. Final unrelated parking assertion failed on a stale oracle, not a product effect. See `read-only-analysis.json`. |
+| `ws-verify2`, `ws-verify3` | History 1->2->3->2->3; same-view no-record; stay does not record, follow does. Numbered/relative sends and sole-source stay no setter. |
+| `ws-verify7` | Maximized numbered/relative stay with source MRU A, target hidden; relative follow; unchanged maximized rect on arrival, native unmaximize returns target allocation. Genuine trailing/first selection wrap without creation. |
+| `ws-verify8` | Both intents across both floating boundaries, floating frames stable, only tiled side reflows. Future-only default seeding and restoration observed. |
+| `ws-verify9` | Ten simultaneously occupied workspaces plus trailing empty, genuine 11-ID ring; selection beyond 9 and both wraps. |
+| `ws-verify10` | Native Settings 83 rows, Keep/Disable/Rebind Apply and saved-file Revert. |
+| `ws-verify11` | Numbered stay Win+Ctrl+Shift+F6, relative stay Ctrl+Shift+F7, history Ctrl+F8 Apply; unbound Keep distinct from Disabled; staged Revert file unchanged. |
+| `ws-verify12` | Passed checkpoints: ordinal-10 relative next fills pre-transfer spare; first relative previous stay fills pre-transfer trailing and retains MRU K; next spare appears. Final unrelated parking assertion failed on a stale oracle, not a product effect. See `read-only-analysis.json`. |
 
 - Effect artifact SHA-256 (runs 2-10):
   `8A11556D918F9FF924271196BFEA3E356C1426EEFE69C7026240F79A47E1E99B`;

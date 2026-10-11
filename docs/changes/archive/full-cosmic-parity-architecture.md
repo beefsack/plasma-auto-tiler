@@ -372,7 +372,7 @@ diagnostic artifacts as restoration or transport evidence.
 - One authorized current-session `[Tiling]` gate wrote a disposable
   `gate=gate-ok` sentinel only under
   `[Tiling][plasma-auto-tiler-poc2-gate-7f3a9c2e]`. It read the sentinel, then
-  restored `/home/beefsack/.config/kwinrc` from its exact preimage. Independent
+  restored `host ~/.config/kwinrc` from its exact preimage. Independent
   post-checks matched its whole-file SHA-256, mode, owner, group, size, and
   nanosecond mtime; `[Tiling]*` remained 111 headers, 444 lines, 17831 bytes,
   with SHA-256 `0c75c825d4001916f2a4722bfd6d70b42589a6ecb6797e46dcd08d06a65b22d1`.
@@ -390,7 +390,7 @@ diagnostic artifacts as restoration or transport evidence.
   controller remained loaded; the planner was absent; and the probe was absent.
   The native three-desktop topology and enabled `eDP-1` output were identical
   before and after. No configuration, process, service, or probe residue
-  remains. Retained `/tmp/opencode` diagnostic captures are
+  remains. Retained diagnostic captures are
   `w3-load-reply.json`, `planner-w3.log`, `planner-w3.log.pid`, and
   `w3-cursor-before.txt`.
 - The ready-only result identified a static trigger-installation defect:
@@ -408,7 +408,7 @@ diagnostic artifacts as restoration or transport evidence.
   The accepted preflight failed on stale persisted tiling state
   (`setup_ready=false`) and one project KGlobalAccel drift
   (`plasma-auto-tiler-focus-right` active `469762124`, expected `268435532`).
-  Existing retained `/tmp/opencode` `w3-*`/`planner-w3.log` artifacts were not
+  Existing retained `w3-*`/`planner-w3.log` artifacts were not
   reused as evidence or removed.
 - Independent review accepts that no planner process started, no probe loaded,
   ran, or unloaded, no manual trigger or `EvaluateMove` request/reply occurred,

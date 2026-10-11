@@ -6,7 +6,7 @@
 - Finding consequences and the contract matrix describe the pre-correction audit snapshot; each finding's status and the implementation objectives below record completion.
 - Reviewed active production wiring only: `kwin/src/entry.ts:1-56`, `plan-adapter-entry.ts:1165-2014`, `plan-adapter.ts:2000-2384`, `workspace-send-adapter.ts:1288-2390`, and `workspace-native.ts:1540-1607`. The separately exportable `workspace-send-adapter-entry.ts` is test/isolated wiring, not the production entry.
 - Primary public API reference: [KWin scripting API](https://develop.kde.org/docs/plasma/kwin/api/). It identifies itself as generated "as of KWin 6.0" and supplies no 6.7.4 provenance or completion/error contract for the audited setters, signals, `callDBus`, or `QTimer`.
-- Source observations are not public guarantees. They are from upstream [KWin v6.7.4](https://invent.kde.org/plasma/kwin/-/tree/v6.7.4), tag `8438567`, where cited. The local `/tmp/opencode/kwin` is 6.7.3 with an unverified revision and was used only to compare source content. The installed host revision remains unverified.
+- Source observations are not public guarantees. They are from upstream [KWin v6.7.4](https://invent.kde.org/plasma/kwin/-/tree/v6.7.4), tag `8438567`, where cited. The local upstream KWin source checkout (6.7.3, unverified revision) was used only to compare source content. The installed host revision remains unverified.
 
 ## Priority Findings
 
@@ -100,5 +100,5 @@
 - Offline implementation coverage includes production `startPlanAdapterEntry` tests for JavaScript property rejection, frame-geometry subscription, fresh focus wrappers, `NameHasOwner` absence activation with flags `0`, unique-owner pinning, stale reply rejection, and no accepted acknowledgement after a rejected membership write. Adapter tests cover the activation and existing signal-fence reentrant/no-op paths.
 - The production-wiring corrections above are not inferred from the separately
   exportable isolated entry. The subsequent user acceptance is recorded in
-  `docs/decisions.md`; `/run/user/1000/plasma-auto-tiler-dev.E2E0QJ.log` is NOT
+  `docs/decisions.md`; `plasma-auto-tiler-dev.E2E0QJ.log` is NOT
   ANALYZED and supplies no API-contract or native-cause evidence.

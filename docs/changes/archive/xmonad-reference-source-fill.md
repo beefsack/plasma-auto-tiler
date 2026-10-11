@@ -38,7 +38,7 @@ follows every fill unit. The Lead owns this note and the triage report.
 - Initial workspace clean on `main`, tracking `origin/main`, at `bf058ee`.
   Three stash object identities recorded for final comparison.
 - Orientation confirmed full matrix pins and clean sibling checkouts at
-  `/home/beefsack/Development/xmonad` and `xmonad-contrib`.
+  `upstream xmonad/xmonad repository` and `xmonad-contrib`.
 - Shared source map: flat Tall master/stack, positional zipper insertion and
   deletion, same-layer geometric Navigation2D swap, no-follow `shiftWin`,
   default EWMH full-float/sink without saved-slot restoration. No tabs,
@@ -131,8 +131,8 @@ These are reference differences, not authorization to change Ours.
 
 - Five separately authored source reviews, final residual/source review,
   independent rule/projection audit and separate final-correction verification.
-- Temporary executable evidence: `/tmp/opencode/xmonad-final-reconcile.py`
-  and `/tmp/opencode/xmonad-final-reconcile.json`. Archived integrated check:
+- Temporary executable evidence: `xmonad-final-reconcile.py`
+  and `xmonad-final-reconcile.json`. Archived integrated check:
   **77 assertions passed, zero failures/pending**, independently rerun by
   the integration reviewer.
 - Exact changed occurrence set is all 64 baseline N/U candidates; original

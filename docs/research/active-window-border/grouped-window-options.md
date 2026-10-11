@@ -9,7 +9,7 @@ selected.
 
 - Access date for all citations: 2026-08-15.
 - Installed host: KWin `6.7.3` (per accepted `research/rendering-options.md`);
-  local pinned checkout `/tmp/opencode/kwin-pinned` at `v6.7.3` (commit
+  local pinned checkout of the upstream KWin source at `v6.7.3` (commit
   `45ec9a6d0ed312a803ff5658a2a3e61f221566c6`). Content below verified against
   that checkout where marked "local", not re-fetched from the web.
 - Blogs are used only as non-authoritative leads; KDE bug/phabricator/GitLab

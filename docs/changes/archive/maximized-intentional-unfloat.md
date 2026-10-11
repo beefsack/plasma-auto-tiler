@@ -45,7 +45,7 @@
   Unconfirmed clear preserves float intent and ends that toggle attempt;
   a later press can retry. Minimal discriminating rows recorded in the
   reference matrix; unsupported reference/native outcomes stay TBD.
-- Red/green in a separate `/tmp/opencode/b9-red` HEAD source copy: baseline
+- Red/green in a separate HEAD source copy `b9-red`: baseline
   new mock suite 4 pass/6 fail, current 10/10 pass. Targeted KWin 249/249 and
   core fixed-size suite 36/36 pass, including real Planner admission/write
   ordering, narrow refusal and subsequent fixed tile-override observation.
@@ -58,7 +58,7 @@
 - Full offline gates: KWin 1238/1238 (173 suites), Rust workspace 1270,
   Linux Windows allowlist 1118, native CTest 33/33; typecheck/bundle,
   clippy/fmt, `just check-portable`, nine shell suites and diff whitespace pass.
-  Evidence: `/tmp/opencode/verified-gates/01-diff-check.log` through
+  Evidence: `01-diff-check.log` through
   `12-shell-suites.log`. Native gate's generated result symlink removed before
   shell gates; no live testing or Windows runtime edits.
 - Decisions/REQ-FLT-06/06b and Ours KDE cell updated. B9/M09 P0 removed;

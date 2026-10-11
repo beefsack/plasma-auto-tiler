@@ -18,8 +18,8 @@ platform API behavior.
 - Develop directly on native Windows 11, not a VM. Multi-monitor live work
   needs a multi-monitor Windows setup. Keep
   the NixOS/Linux flow intact.
-- Sandbox closed 2026-09-30: Phase 1-3 live proof runs on the physical
-  desktop with owned disposable windows first; Sandbox deferred to Phase 4.
+- Sandbox closed 2026-09-30: Phase 1-3 live proof runs in a native
+  Windows session with owned disposable windows first; Sandbox deferred to Phase 4.
   Route detail stays in [Windows plan](research/windows-port/plan.md).
 - Elevated (administrator) windows stay unmanaged by default: they float at
   their native position while other windows keep tiling. A future opt-in
@@ -104,9 +104,13 @@ platform API behavior.
 - User decision 2026-10-08 (dev environment CI): verify mise installs
   and tool/host/component smoke checks on Windows and macOS 15 arm64, retaining
   Windows Cargo gates. No exact mise/Nix equality gate.
-- Reference implementations cloned locally by the user (2026-10-03) under
-  `~/Development` remain inputs to the functional spec; cosmic-comp (n-ary
-  splits) is the user's favourite tiling UX.
+- Reference implementations (2026-10-03) remain inputs to the functional
+  spec; upstream repositories and pinned revisions are listed in the
+  [reference matrix](spec/reference-outcomes.md). cosmic-comp (n-ary splits)
+  is the user's favourite tiling UX.
+- User rule 2026-10-11: never commit local paths or information about local
+  machines (paths, host names, hardware/resource details); describe test
+  conditions generically. [Agent rule](../AGENTS.md#local-system-information).
 
 ## Settings, Tray and First-Run
 
