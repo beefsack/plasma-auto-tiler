@@ -73,7 +73,7 @@ decisions of 2026-09-24 are under
   OBS-side tag fetching (`obs_scm`, `cargo_vendor`, etc.) triggered by a narrow
   token. Assess credentials, tag/source integrity and execution security for
   each route; produce a recommendation before implementing the handoff.
-- P2 | Push code down | Recurring post-0.1 passes: move logic from host-coupled
+- P2 | [Push code down](principles.md#layering) | Recurring post-0.1 passes: move logic from host-coupled
   `kwin/src` TypeScript and `kwin/native-effect` C++ (including settings and
   shortcut reconciliation) into system-specific Rust, then into the agnostic
   shared core where appropriate. First pass after 0.1, aligned with or ahead

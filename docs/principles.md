@@ -16,6 +16,16 @@ Project principles, approved by the user.
 - This matters most in complex areas with uncontrolled elements and multiple
   failure modes, where added machinery multiplies the ways things can fail.
 
+## Layering
+
+- Push as much logic as is sensible down into the shared, system-agnostic
+  core, so every platform reuses it.
+- System-specific logic sits in a middle layer of platform code. The layer
+  coupled directly to a host (scripts, effects, settings modules, OS hooks)
+  stays as thin as reasonably possible.
+- Pushing code down is ongoing work applied with judgement and within reason;
+  it never overrides Simplicity or host-native behavior.
+
 ## Resilience
 
 - Never give up permanently. The only acceptable terminal state is a hard
