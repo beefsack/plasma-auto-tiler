@@ -447,23 +447,39 @@ mod native_topmost_hide {
         }
     }
 
+    fn runner_is_medium() -> bool {
+        // Own-process windows inherit the runner integrity level, and the
+        // integrity gate (product_hide.rs) precedes the topmost/visibility
+        // gates. Medium runners reach those gates; elevated runners stop at
+        // "integrity" before them.
+        tiler_windows::native::current_integrity_level()
+            .ok()
+            .is_some_and(tiler_windows::lifecycle::is_medium_rid)
+    }
+
     #[test]
     fn normal_tile_without_band_never_hits_topmost_gate() {
         let window = TestWindow::create(false);
         let owner = fake_owner();
         // Actual classification: an invisible non-topmost window reaches the
         // visibility gate, proving no topmost refusal without a band.
+        // Non-medium runners stop at the earlier integrity gate instead.
+        let expected = if runner_is_medium() {
+            Some("not-visible")
+        } else {
+            Some("integrity")
+        };
         assert_eq!(
             TestWindow::refusal_code(sys::classify_candidate(window.hwnd, &owner)),
-            Some("not-visible")
+            expected
         );
         assert_eq!(
             TestWindow::refusal_code(sys::classify_candidate_for_hide(window.hwnd, &owner, false)),
-            Some("not-visible")
+            expected
         );
         assert_eq!(
             TestWindow::refusal_code(sys::classify_candidate_for_hide(window.hwnd, &owner, true)),
-            Some("not-visible")
+            expected
         );
         assert!(!project_topmost_hide_allowed(None, false));
     }
@@ -473,13 +489,19 @@ mod native_topmost_hide {
         let window = TestWindow::create(true);
         let owner = fake_owner();
         // Blanket path and hide path without the flag both refuse topmost.
+        // Non-medium runners stop at the earlier integrity gate instead.
+        let expected = if runner_is_medium() {
+            Some("topmost")
+        } else {
+            Some("integrity")
+        };
         assert_eq!(
             TestWindow::refusal_code(sys::classify_candidate(window.hwnd, &owner)),
-            Some("topmost")
+            expected
         );
         assert_eq!(
             TestWindow::refusal_code(sys::classify_candidate_for_hide(window.hwnd, &owner, false)),
-            Some("topmost")
+            expected
         );
         // Unknown history and preexisting prior never authenticate.
         assert!(!project_topmost_hide_allowed(None, true));
@@ -492,10 +514,16 @@ mod native_topmost_hide {
         let owner = fake_owner();
         // Same live topmost window: the flag moves actual classification past
         // the topmost gate to the next gate (invisible, so not-visible),
-        // proving the bypass without clearing the band.
+        // proving the bypass without clearing the band. Non-medium runners
+        // stop at the earlier integrity gate even with the flag.
+        let expected = if runner_is_medium() {
+            Some("not-visible")
+        } else {
+            Some("integrity")
+        };
         assert_eq!(
             TestWindow::refusal_code(sys::classify_candidate_for_hide(window.hwnd, &owner, true)),
-            Some("not-visible")
+            expected
         );
         assert!(project_topmost_hide_allowed(Some(false), true));
     }
@@ -507,21 +535,32 @@ mod native_topmost_hide {
         sys::install_float_intent_marker(window.hwnd).expect("float marker installs");
         // A present float marker without the runtime flag still refuses
         // topmost: markers never authorize hiding. A recycled identity has no
-        // exact runtime key (`None`), so it refuses the same way.
+        // exact runtime key (`None`), so it refuses the same way. Non-medium
+        // runners stop at the earlier integrity gate instead.
+        let refused = if runner_is_medium() {
+            Some("topmost")
+        } else {
+            Some("integrity")
+        };
+        let bypassed = if runner_is_medium() {
+            Some("not-visible")
+        } else {
+            Some("integrity")
+        };
         assert_eq!(
             TestWindow::refusal_code(sys::classify_candidate(window.hwnd, &owner)),
-            Some("topmost")
+            refused
         );
         assert_eq!(
             TestWindow::refusal_code(sys::classify_candidate_for_hide(window.hwnd, &owner, false)),
-            Some("topmost")
+            refused
         );
         assert!(!project_topmost_hide_allowed(None, true));
         // The authenticated flag still bypasses with the marker present,
         // proving the flag (not the marker) is the authority.
         assert_eq!(
             TestWindow::refusal_code(sys::classify_candidate_for_hide(window.hwnd, &owner, true)),
-            Some("not-visible")
+            bypassed
         );
         let _ = sys::remove_float_intent_marker(window.hwnd);
     }

@@ -101,3 +101,20 @@
   tile marker/native ops. Preserve batched hydration and exact-lifetime fencing;
   enable Engine fixed-size admission only after full Windows observation/origin
   wiring. Reuse exact-owner CLI and corrected harness dependencies above.
+
+## Publication and hosted fixture repair
+
+- Pushed `a3b6cdaf9ad4f2a5742fced2aa12b8455277f1ce`
+  (`Preserve Windows float and sticky intent across restart`). Rebase preserved
+  concurrent packaging/licensing `0f5e75e`/`8e04a80` without conflict; no Windows
+  or shared Rust production changes entered from that rebase.
+- CI [38100860417](https://github.com/beefsack/plasma-auto-tiler/actions/runs/38100860417):
+  rust, kwin, shell, native and macos passed; four Windows native hide-classifier
+  fixtures failed at the earlier integrity gate. Hosted Windows runs elevated;
+  owned invisible windows inherit that integrity. The product correctly refused
+  them before topmost/visibility checks, unlike the medium-integrity dev host.
+- Fixture-only correction asserts integrity refusal on non-medium runners and
+  retains actual topmost/visibility assertions on medium runners. No tests
+  ignored, no elevation or product-gate changes. Native four-package tests,
+  fmt and strict clippy passed again; production artifact/live evidence above
+  remains current. Follow-up CI outcome is reported in the session handover.
