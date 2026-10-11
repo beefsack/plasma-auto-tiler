@@ -46,6 +46,8 @@
 - Native four-crate locked offline build/test/fmt/clippy (`-D warnings`) and
   whitespace gates pass, with the same eight audited window-creating tests
   skipped as [item (a)](windows-first-run-stop.md). No live actions ran.
+  CI passed for delivery `ba92c01`
+  ([run](https://github.com/beefsack/OmniTiler/actions/runs/38105464467)).
 - Pending user check: externally focus the fullscreen game on WS1, press Win+2
   then Win+1. Verify the game regains focus and fullscreen/display mode is
   unchanged. Repeat via previous/relative selection. Trace should show the

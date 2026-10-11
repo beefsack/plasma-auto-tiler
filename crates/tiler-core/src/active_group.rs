@@ -15,7 +15,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::bounds::is_opaque_id;
 use crate::directional::{Node, NodeId, WindowId};
-use crate::geometry::{Rect, project};
+use crate::geometry::Rect;
+use crate::size_hints::{WindowSizeHints, project_with_hints};
 
 /// One projected group member: opaque window/leaf identities plus the
 /// engine-projected rectangle (never a native/client rectangle).
@@ -101,6 +102,11 @@ fn union_rect(rects: &[Rect]) -> Option<Rect> {
 /// - `bounds`/`gap` are the retained domain projection inputs.
 /// - `leaf_to_window` maps every tiled leaf to its opaque window.
 ///
+/// Hint-free: member rectangles come from the plain share-proportional
+/// projector. Callers with advisory per-window minimums use
+/// [`describe_active_group_with_hints`] so the union matches the displayed
+/// hint-enforced layout.
+///
 /// Fail-closed (`None`) on any invalid input, unmapped member, projection
 /// failure, or bound violation. Member order follows projection order.
 pub fn describe_active_group(
@@ -109,6 +115,29 @@ pub fn describe_active_group(
     gap: i32,
     focused_leaf: &NodeId,
     leaf_to_window: &BTreeMap<NodeId, WindowId>,
+) -> Option<ActiveGroup> {
+    describe_active_group_with_hints(tree, bounds, gap, focused_leaf, leaf_to_window, &|_| {
+        WindowSizeHints::none()
+    })
+}
+
+/// Hint-aware immediate-parent derivation: the same membership, validation,
+/// and checked-union contract as [`describe_active_group`], but member
+/// rectangles come from the hints-aware projector ordinary plans use
+/// ([`project_with_hints`]), so the union matches the displayed layout
+/// whenever minimums reallocate.
+///
+/// `resolve` maps a leaf to its advisory minimums (unknown leaves resolve to
+/// [`WindowSizeHints::none`], projecting exactly as before). Overconstrained
+/// leaves are advisory only: ordinary plans still emit them, so membership
+/// and the union include them rather than failing closed.
+pub fn describe_active_group_with_hints(
+    tree: &Node,
+    bounds: Rect,
+    gap: i32,
+    focused_leaf: &NodeId,
+    leaf_to_window: &BTreeMap<NodeId, WindowId>,
+    resolve: &dyn Fn(&NodeId) -> WindowSizeHints,
 ) -> Option<ActiveGroup> {
     if focused_leaf.0.is_empty() || !is_opaque_id(&focused_leaf.0) {
         return None;
@@ -129,9 +158,9 @@ pub fn describe_active_group(
     if !descendant_set.contains(focused_leaf) {
         return None;
     }
-    let projected = project(tree, bounds, gap).ok()?;
+    let hinted = project_with_hints(tree, bounds, gap, resolve).ok()?;
     let mut members = Vec::with_capacity(descendant_leaves.len());
-    for entry in &projected {
+    for entry in &hinted.leaves {
         if !descendant_set.contains(&entry.leaf) {
             continue;
         }
@@ -164,6 +193,7 @@ pub fn describe_active_group(
 mod tests {
     use super::*;
     use crate::directional::Axis;
+    use crate::geometry::project;
 
     fn leaf(id: &str) -> Node {
         Node::Leaf {
@@ -173,6 +203,15 @@ mod tests {
 
     fn group(id: &str, axis: Axis, children: Vec<Node>) -> Node {
         let shares = vec![1u64; children.len()];
+        Node::Group {
+            id: NodeId::from(id),
+            axis,
+            children,
+            shares,
+        }
+    }
+
+    fn group_with_shares(id: &str, axis: Axis, children: Vec<Node>, shares: Vec<u64>) -> Node {
         Node::Group {
             id: NodeId::from(id),
             axis,
@@ -265,6 +304,93 @@ mod tests {
             assert!(member.rect.x + member.rect.w <= group.bounds.x + group.bounds.w);
             assert!(member.rect.y + member.rect.h <= group.bounds.y + group.bounds.h);
         }
+    }
+
+    #[test]
+    fn hinted_union_follows_enforced_minimums() {
+        // The hint-aware variant projects the same tree through the
+        // hints-aware projector ordinary plans use: the focused pair union
+        // follows the enforced minimums, not the share-proportional base.
+        let tree = group_with_shares(
+            "root",
+            Axis::Vertical,
+            vec![
+                leaf("w25-leaf"),
+                group_with_shares(
+                    "inner",
+                    Axis::Vertical,
+                    vec![leaf("w24-leaf"), leaf("w23-leaf")],
+                    vec![461, 117],
+                ),
+            ],
+            vec![765, 583],
+        );
+        let map = window_map(&[
+            ("w25-leaf", "w25"),
+            ("w24-leaf", "w24"),
+            ("w23-leaf", "w23"),
+        ]);
+        let domain = Rect {
+            x: 8,
+            y: 8,
+            w: 2544,
+            h: 1364,
+        };
+        let resolve = |leaf: &NodeId| match leaf.0.as_str() {
+            "w25-leaf" => WindowSizeHints {
+                min_w: Some(401),
+                min_h: Some(246),
+                max_w: None,
+                max_h: None,
+            },
+            "w24-leaf" => WindowSizeHints {
+                min_w: Some(1263),
+                min_h: Some(750),
+                max_w: None,
+                max_h: None,
+            },
+            "w23-leaf" => WindowSizeHints {
+                min_w: Some(582),
+                min_h: Some(118),
+                max_w: None,
+                max_h: None,
+            },
+            _ => WindowSizeHints::none(),
+        };
+        let group = describe_active_group_with_hints(
+            &tree,
+            domain,
+            8,
+            &NodeId::from("w24-leaf"),
+            &map,
+            &resolve,
+        )
+        .expect("hinted inner group resolves");
+        assert_eq!(group.group, NodeId::from("inner"));
+        assert_eq!(group.members.len(), 2);
+        // Hint-enforced pair union: w24 holds its 750 minimum, so the union
+        // top is 496, not the 785 the hint-free base gives.
+        assert_eq!(
+            group.bounds,
+            Rect {
+                x: 8,
+                y: 496,
+                w: 2544,
+                h: 876
+            }
+        );
+        // The hint-free entry keeps the legacy union on the same tree.
+        let legacy = describe_active_group(&tree, domain, 8, &NodeId::from("w24-leaf"), &map)
+            .expect("legacy inner group resolves");
+        assert_eq!(
+            legacy.bounds,
+            Rect {
+                x: 8,
+                y: 785,
+                w: 2544,
+                h: 587
+            }
+        );
     }
 
     #[test]

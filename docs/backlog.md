@@ -163,6 +163,10 @@ decisions of 2026-09-24 are under
   - (b) Offline-delivered: verified departure focus now feeds remembered return
     focus, including fullscreen members; game focus/display-mode live check
     pending ([record](changes/archive/windows-workspace-fullscreen-focus.md)).
+  - (c) Offline-delivered: group projection now honors the same minimum hints
+    as tile placement; exact trace replay and nested-layout regression pass.
+    Underlay appearance live check pending
+    ([record](changes/archive/windows-group-underlay-geometry.md)).
 - P1 | KDE follow-ups from 2026-10-11 Windows dogfood | Cross-platform
   decisions for the KDE session: R-MAX-06 born-maximized setting (default
   tile) and active border radius default 6; underlay default visibility

@@ -62,7 +62,7 @@ use crate::active_border_sys::{
 };
 use crate::group_underlay::{
     GroupUnderlayOptions, MoveSizeKind, aggregate_chord_keys, classify_hit_test, underlay_eligible,
-    underlay_outer_rect,
+    underlay_geometry_debug, underlay_outer_rect,
 };
 use crate::lifecycle::{
     WORKSPACE_REQUEST_FILE, exe_paths_equal, is_medium_rid,
@@ -2526,6 +2526,50 @@ fn refresh_group_underlay(
         hide_underlay(state, "no-group");
         return;
     };
+    // Copies for the diagnostics payload: `domain` moves into the event below.
+    let domain_bounds = domain.bounds;
+    let domain_gap = domain.gap;
+    // Advisory minimums for the ActiveGroup projection: the same retained
+    // per-window hints the ordinary plan for this state used. Reads retained
+    // maps only (no native queries, no writes); unknown members resolve to
+    // no hints exactly like ordinary plans.
+    let hint_rows: Vec<(
+        String,
+        String,
+        String,
+        tiler_core::size_hints::WindowSizeHints,
+    )> = state
+        .member_tokens
+        .iter()
+        .filter_map(|(key, token)| {
+            let sibling = state.workspaces.member_loc(key)?;
+            if sibling.output != loc.output || sibling.workspace != loc.workspace {
+                return None;
+            }
+            let hints = state
+                .hint_logged
+                .get(token)
+                .copied()
+                .unwrap_or_else(tiler_core::size_hints::WindowSizeHints::none);
+            Some((
+                token.clone(),
+                sibling.output.clone(),
+                sibling.workspace.clone(),
+                hints,
+            ))
+        })
+        .collect();
+    let hint_members: Vec<crate::group_underlay::UnderlayHintMember<'_>> = hint_rows
+        .iter()
+        .map(
+            |(token, output, workspace, hints)| crate::group_underlay::UnderlayHintMember {
+                token,
+                output,
+                workspace,
+                hints: *hints,
+            },
+        )
+        .collect();
     let event = tiler_core::boundary::CoreEvent {
         owner: state.owner.clone(),
         generation: state.generation.clone(),
@@ -2536,7 +2580,7 @@ fn refresh_group_underlay(
         domain_key,
         outer_gap: state.outer_gap,
         focused_window: WindowId(window.token.clone()),
-        windows: Vec::new(),
+        windows: crate::group_underlay::underlay_hint_windows(&hint_members),
         directional: None,
         directional_target_outer_gap: None,
         target_domain: None,
@@ -2625,6 +2669,30 @@ fn refresh_group_underlay(
         state.underlay.style.color,
         state.underlay.style.alpha,
     ));
+    // Bounded geometry observability only: the Engine union, immediate-parent
+    // group/leaf, member rects, DPI/pad inputs, and domain/revision ride the
+    // already-logged shown/redrew/moved lines. No new lines, no geometry or
+    // placement change; the change-gated signature below is untouched.
+    let member_windows: Vec<String> = found
+        .members
+        .iter()
+        .map(|member| member.window.0.clone())
+        .collect();
+    let member_rects: Vec<Rect> = found.members.iter().map(|member| member.rect).collect();
+    let geometry_debug = underlay_geometry_debug(crate::group_underlay::UnderlayGeometryReport {
+        union_rect: found.bounds,
+        group: found.group.0.as_str(),
+        focused_leaf: found.focused_leaf.0.as_str(),
+        member_windows: &member_windows,
+        member_rects: &member_rects,
+        dpi,
+        gap_px,
+        width_px,
+        extension_px,
+        domain_bounds,
+        domain_gap,
+        base_revision: found.base_revision,
+    });
     match outcome {
         OverlayOutcome::Hidden => {
             let failure = format!(
@@ -2677,16 +2745,19 @@ fn refresh_group_underlay(
             }
         }
         OverlayOutcome::Moved if state.trace => {
-            log_json_at(
-                &state.log_path,
-                serde_json::json!({
+            let mut event = serde_json::json!({
                     "event": "group-underlay",
                     "tick": state.tick,
                     "outcome": "moved",
                     "target": window.token,
                     "outer": [outer.x, outer.y, outer.w, outer.h],
-                }),
-            );
+            });
+            if let Some(fields) = geometry_debug.as_object() {
+                for (key, value) in fields {
+                    event[key] = value.clone();
+                }
+            }
+            log_json_at(&state.log_path, event);
         }
         OverlayOutcome::Moved => {}
         _ => {
@@ -2708,9 +2779,7 @@ fn refresh_group_underlay(
             if !(changed || state.trace) {
                 return;
             }
-            log_json_at(
-                &state.log_path,
-                serde_json::json!({
+            let mut event = serde_json::json!({
                     "event": "group-underlay",
                     "tick": state.tick,
                     "outcome": match outcome {
@@ -2723,8 +2792,13 @@ fn refresh_group_underlay(
                     "color": color_hex,
                     "members": found.members.len(),
                     "dib_checksum": state.underlay_overlay.snapshot()["dib_checksum"],
-                }),
-            );
+            });
+            if let Some(fields) = geometry_debug.as_object() {
+                for (key, value) in fields {
+                    event[key] = value.clone();
+                }
+            }
+            log_json_at(&state.log_path, event);
         }
     }
 }

@@ -1217,6 +1217,11 @@ platform API behavior.
   dragged frame moves. Hide unavailable/root-leaf/floating, minimised, maximised
   and fullscreen subjects. Existing pending/drag-residue gates fail closed;
   Win32 interactive movement pauses reconciliation without adding core residue.
+  Dogfood correction delivered offline 2026-10-11: ActiveGroup uses the same
+  minimum-hint projector as ordinary plans; Windows carries retained advisory
+  hints only, never native/client rectangles. Existing hintless callers and
+  wire schema are preserved. Native nested-layout check pending
+  ([record](changes/archive/windows-group-underlay-geometry.md)).
 - Anchor beneath the lowest visible, nonminimised/noncloaked managed member and
   the visible active-border surface, matching KDE underlay Z=-2 versus border
   Z=-1. Recheck actual surface geometry/visibility/stacking at refresh even when

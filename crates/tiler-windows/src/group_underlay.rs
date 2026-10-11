@@ -11,7 +11,10 @@
 //! premultiplied-alpha fill raster. Native creation/presentation/placement
 //! reuse the owned carrier in [`crate::active_border_sys`].
 
+use tiler_core::directional::{OutputId, WindowId, WorkspaceId};
 use tiler_core::geometry::Rect;
+use tiler_core::seed::EngineWindow;
+use tiler_core::size_hints::WindowSizeHints;
 use tiler_core::visual::{VisualRect, group_focus_eligible};
 
 /// Underlay default: on (mirrors the KDE highlight default).
@@ -261,6 +264,55 @@ pub fn underlay_outer_rect(
     })
 }
 
+/// Bounded geometry diagnostics for shown/redrew `group-underlay` log lines.
+///
+/// Pure payload construction only: no behavior change, no new log lines, and
+/// no user content. All identities are opaque Engine tokens/ids; all geometry
+/// is numeric. Lets the next live trace separate a stale Engine union from a
+/// wrong immediate-parent subtree from adapter-side pad/DPI/domain math.
+/// Input bundle for [`underlay_geometry_debug`]: keeps the diagnostics call
+/// to one argument (strict Clippy) while staying a pure payload with opaque
+/// ids and numeric geometry only.
+pub struct UnderlayGeometryReport<'a> {
+    pub union_rect: Rect,
+    pub group: &'a str,
+    pub focused_leaf: &'a str,
+    pub member_windows: &'a [String],
+    pub member_rects: &'a [Rect],
+    pub dpi: u32,
+    pub gap_px: i32,
+    pub width_px: i32,
+    pub extension_px: i32,
+    pub domain_bounds: Rect,
+    pub domain_gap: i32,
+    pub base_revision: u64,
+}
+
+#[must_use]
+pub fn underlay_geometry_debug(report: UnderlayGeometryReport<'_>) -> serde_json::Value {
+    serde_json::json!({
+        "union": [report.union_rect.x, report.union_rect.y, report.union_rect.w, report.union_rect.h],
+        "group": report.group,
+        "focused_leaf": report.focused_leaf,
+        "member_windows": report.member_windows,
+        "member_rects": report.member_rects
+            .iter()
+            .map(|rect| [rect.x, rect.y, rect.w, rect.h])
+            .collect::<Vec<[i32; 4]>>(),
+        "dpi": report.dpi,
+        "gap_px": report.gap_px,
+        "width_px": report.width_px,
+        "extension_px": report.extension_px,
+        "domain_bounds": [
+            report.domain_bounds.x,
+            report.domain_bounds.y,
+            report.domain_bounds.w,
+            report.domain_bounds.h
+        ],
+        "domain_gap": report.domain_gap,
+        "base_revision": report.base_revision,
+    })
+}
 /// Fill a BGRA buffer with the premultiplied-alpha underlay colour: straight
 /// RGB scaled by `alpha/255` (rounded) with the alpha byte itself, over the
 /// whole surface (the DIB is exactly the outer rect). Returns the FNV-1a
@@ -294,6 +346,47 @@ pub fn paint_fill_argb(pixels: &mut [u8], w: i32, h: i32, color: (u8, u8, u8), a
         }
     }
     hash
+}
+
+/// One member's hint contribution to an ActiveGroup query: opaque identities
+/// plus the retained advisory minimums. No geometry, no topology.
+pub struct UnderlayHintMember<'a> {
+    pub token: &'a str,
+    pub output: &'a str,
+    pub workspace: &'a str,
+    pub hints: WindowSizeHints,
+}
+
+/// Hints-only ActiveGroup query entries for one domain's members: the same
+/// retained per-window minimums the ordinary plan for this state used, so the
+/// Engine projects the group union through the identical hints-aware
+/// projector. Rectangles are empty on purpose: the resolver reads window and
+/// hints alone and never consults carried geometry or membership. No window,
+/// hook, or placement effect; pure data assembly.
+#[must_use]
+pub fn underlay_hint_windows(members: &[UnderlayHintMember<'_>]) -> Vec<EngineWindow> {
+    members
+        .iter()
+        .map(|member| EngineWindow {
+            window: WindowId(member.token.to_owned()),
+            output: OutputId(member.output.to_owned()),
+            workspace: WorkspaceId(member.workspace.to_owned()),
+            rect: Rect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+            },
+            floating: false,
+            fit_excluded: false,
+            fullscreen: false,
+            maximized: false,
+            sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
+            hints: member.hints,
+        })
+        .collect()
 }
 
 /// Echo of parsed underlay flags for argv-consistency verification.
@@ -444,6 +537,267 @@ mod tests {
         // Degenerate or negative inputs fail closed.
         assert_eq!(underlay_outer_rect(rect(10, 20, 0, 80), 2, 4, 3), None);
         assert_eq!(underlay_outer_rect(rect(10, 20, 100, 80), -1, 4, 3), None);
+    }
+
+    #[test]
+    fn geometry_debug_carries_opaque_ids_and_numeric_inputs() {
+        // Regression for the short-underlay trace: the next live line must
+        // carry the Engine union, immediate-parent group/leaf, member rects,
+        // DPI/pad inputs, and domain/revision so a partial outer can be
+        // attributed without new behavior. Pure payload, opaque ids only.
+        let debug = underlay_geometry_debug(UnderlayGeometryReport {
+            union_rect: rect(8, 496, 2544, 876),
+            group: "inner",
+            focused_leaf: "b-leaf",
+            member_windows: &["win-2".to_owned(), "win-3".to_owned()],
+            member_rects: &[rect(8, 496, 2544, 750), rect(8, 1254, 2544, 118)],
+            dpi: 120,
+            gap_px: 0,
+            width_px: 4,
+            extension_px: 4,
+            domain_bounds: rect(0, 0, 2560, 1380),
+            domain_gap: 8,
+            base_revision: 42,
+        });
+        assert_eq!(debug["union"], serde_json::json!([8, 496, 2544, 876]));
+        assert_eq!(debug["group"], serde_json::json!("inner"));
+        assert_eq!(debug["focused_leaf"], serde_json::json!("b-leaf"));
+        assert_eq!(
+            debug["member_windows"],
+            serde_json::json!(["win-2", "win-3"])
+        );
+        assert_eq!(
+            debug["member_rects"],
+            serde_json::json!([[8, 496, 2544, 750], [8, 1254, 2544, 118]])
+        );
+        assert_eq!(debug["dpi"], serde_json::json!(120));
+        assert_eq!(debug["gap_px"], serde_json::json!(0));
+        assert_eq!(debug["width_px"], serde_json::json!(4));
+        assert_eq!(debug["extension_px"], serde_json::json!(4));
+        assert_eq!(
+            debug["domain_bounds"],
+            serde_json::json!([0, 0, 2560, 1380])
+        );
+        assert_eq!(debug["domain_gap"], serde_json::json!(8));
+        assert_eq!(debug["base_revision"], serde_json::json!(42));
+    }
+
+    #[test]
+    fn active_group_union_without_hints_replays_tick136_short_outer() {
+        // Tick-136 replay from the short-underlay trace: one retained share
+        // state, two projections. The hinted Engine plan must equal the
+        // logged tick-136 plan exactly, while the hint-free ActiveGroup union
+        // of the focused bottom pair must equal the logged short outer's
+        // source union ([8,785,2544,587] -> [0,777,2560,603] at pad 8).
+        // Pure Engine replay, no windows, no writes.
+        use std::collections::BTreeMap;
+        use tiler_core::active_group::describe_active_group;
+        use tiler_core::directional::{Axis, Node, NodeId, WindowId};
+        use tiler_core::size_hints::{WindowSizeHints, project_with_hints};
+
+        fn leaf(id: &str) -> Node {
+            Node::Leaf {
+                id: NodeId::from(id),
+            }
+        }
+        fn hints(min_w: i32, min_h: i32) -> WindowSizeHints {
+            WindowSizeHints {
+                min_w: Some(min_w),
+                min_h: Some(min_h),
+                max_w: None,
+                max_h: None,
+            }
+        }
+
+        // Nested vertical stack with the retained shares that the hinted
+        // plan below implies (the logged members:2 already proves the
+        // focused pair sits in an inner group); domain bounds are the
+        // 8px-inset work area.
+        let tree = Node::Group {
+            id: NodeId::from("root"),
+            axis: Axis::Vertical,
+            children: vec![
+                leaf("w25-leaf"),
+                Node::Group {
+                    id: NodeId::from("inner"),
+                    axis: Axis::Vertical,
+                    children: vec![leaf("w24-leaf"), leaf("w23-leaf")],
+                    shares: vec![461, 117],
+                },
+            ],
+            shares: vec![765, 583],
+        };
+        let map: BTreeMap<NodeId, WindowId> = [
+            ("w25-leaf", "w25"),
+            ("w24-leaf", "w24"),
+            ("w23-leaf", "w23"),
+        ]
+        .into_iter()
+        .map(|(leaf, window)| (NodeId::from(leaf), WindowId::from(window)))
+        .collect();
+        let bounds = rect(8, 8, 2544, 1364);
+        let resolve = |leaf: &NodeId| match leaf.0.as_str() {
+            "w25-leaf" => hints(401, 246),
+            "w24-leaf" => hints(1263, 750),
+            "w23-leaf" => hints(582, 118),
+            _ => WindowSizeHints::none(),
+        };
+        // The regular Reconcile/move path honors minimums: byte-exact tick-136 plan.
+        let hinted = project_with_hints(&tree, bounds, 8, &resolve).expect("hinted projection");
+        assert!(hinted.overconstrained.is_empty());
+        let hinted_rects: Vec<Rect> = hinted.leaves.iter().map(|leaf| leaf.rect).collect();
+        assert_eq!(
+            hinted_rects,
+            vec![
+                rect(8, 8, 2544, 480),
+                rect(8, 496, 2544, 750),
+                rect(8, 1254, 2544, 118),
+            ],
+            "hinted plan must equal the logged tick-136 plan"
+        );
+        // The ActiveGroup path ignores minimums: the focused bottom pair
+        // unions to the short source behind the logged outer.
+        let group = describe_active_group(&tree, bounds, 8, &NodeId::from("w24-leaf"), &map)
+            .expect("immediate parent resolves");
+        assert_eq!(group.group, NodeId::from("inner"));
+        assert_eq!(group.members.len(), 2);
+        assert_eq!(group.bounds, rect(8, 785, 2544, 587));
+        assert_eq!(
+            underlay_outer_rect(group.bounds, 0, 4, 4),
+            Some(rect(0, 777, 2560, 603)),
+            "hint-free union must yield the logged tick-136 outer"
+        );
+        // The same members under hints cover the full pair: the 289px top
+        // delta is exactly w24's hint deficit (750 - 461).
+        assert_eq!(
+            hinted_rects[1].y.min(hinted_rects[2].y),
+            496,
+            "hinted pair top follows the enforced w24 minimum"
+        );
+        assert_eq!(group.bounds.y, 785);
+        assert_eq!(785 - 496, 289);
+    }
+
+    #[test]
+    fn active_group_union_without_hints_shorts_nested_parent_top() {
+        // Nested V[W1 H[W2 W3]] replay with the trace's min sizes: the H
+        // union is split-invariant, but the H rectangle itself sits lower
+        // without hints because the outer split ignores the H subtree
+        // minimum. Result is bottom-anchored and short at the top, the
+        // reported symptom shape. Pure Engine replay, no windows, no writes.
+        use std::collections::BTreeMap;
+        use tiler_core::active_group::describe_active_group;
+        use tiler_core::directional::{Axis, Node, NodeId, WindowId};
+        use tiler_core::size_hints::{WindowSizeHints, project_with_hints};
+
+        fn leaf(id: &str) -> Node {
+            Node::Leaf {
+                id: NodeId::from(id),
+            }
+        }
+        fn hints(min_w: i32, min_h: i32) -> WindowSizeHints {
+            WindowSizeHints {
+                min_w: Some(min_w),
+                min_h: Some(min_h),
+                max_w: None,
+                max_h: None,
+            }
+        }
+
+        let tree = Node::Group {
+            id: NodeId::from("root"),
+            axis: Axis::Vertical,
+            children: vec![
+                leaf("w1-leaf"),
+                Node::Group {
+                    id: NodeId::from("inner"),
+                    axis: Axis::Horizontal,
+                    children: vec![leaf("w2-leaf"), leaf("w3-leaf")],
+                    shares: vec![1268, 1268],
+                },
+            ],
+            shares: vec![800, 548],
+        };
+        let map: BTreeMap<NodeId, WindowId> =
+            [("w1-leaf", "w1"), ("w2-leaf", "w2"), ("w3-leaf", "w3")]
+                .into_iter()
+                .map(|(leaf, window)| (NodeId::from(leaf), WindowId::from(window)))
+                .collect();
+        let bounds = rect(8, 8, 2544, 1364);
+        let resolve = |leaf: &NodeId| match leaf.0.as_str() {
+            "w1-leaf" => hints(401, 246),
+            "w2-leaf" => hints(1263, 750),
+            "w3-leaf" => hints(582, 118),
+            _ => WindowSizeHints::none(),
+        };
+        let hinted = project_with_hints(&tree, bounds, 8, &resolve).expect("hinted projection");
+        assert!(hinted.overconstrained.is_empty());
+        // Child order: W1, then H's W2, W3. The bottom pair matches the live
+        // side-by-side layout shape (1268-wide cells, full H height).
+        assert_eq!(
+            hinted
+                .leaves
+                .iter()
+                .map(|leaf| leaf.rect)
+                .collect::<Vec<Rect>>(),
+            vec![
+                rect(8, 8, 2544, 606),
+                rect(8, 622, 1268, 750),
+                rect(1284, 622, 1268, 750),
+            ]
+        );
+        let group = describe_active_group(&tree, bounds, 8, &NodeId::from("w2-leaf"), &map)
+            .expect("immediate parent resolves");
+        assert_eq!(group.group, NodeId::from("inner"));
+        assert_eq!(group.members.len(), 2);
+        assert_eq!(group.bounds, rect(8, 820, 2544, 552));
+        assert_eq!(
+            underlay_outer_rect(group.bounds, 0, 4, 4),
+            Some(rect(0, 812, 2560, 568)),
+            "hint-free H union stays bottom-anchored but short at the top"
+        );
+    }
+
+    #[test]
+    fn hint_windows_carry_hints_without_geometry() {
+        // The ActiveGroup query attaches retained minimums only: opaque
+        // window identity plus hints, an empty rectangle, and no flags, so
+        // the resolver cannot read geometry or membership from the carrier.
+        let members = [
+            UnderlayHintMember {
+                token: "w24",
+                output: "o1",
+                workspace: "ws1",
+                hints: WindowSizeHints {
+                    min_w: Some(1263),
+                    min_h: Some(750),
+                    max_w: None,
+                    max_h: None,
+                },
+            },
+            UnderlayHintMember {
+                token: "w25",
+                output: "o1",
+                workspace: "ws1",
+                hints: WindowSizeHints::none(),
+            },
+        ];
+        let windows = underlay_hint_windows(&members);
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].window.0, "w24");
+        assert_eq!(windows[0].hints.min_h, Some(750));
+        assert_eq!(
+            windows[0].rect,
+            Rect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0
+            }
+        );
+        assert!(!windows[0].floating);
+        assert_eq!(windows[1].hints, WindowSizeHints::none());
+        assert!(underlay_hint_windows(&[]).is_empty());
     }
 
     #[test]

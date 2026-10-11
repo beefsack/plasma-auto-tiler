@@ -105,3 +105,15 @@
   accent/configured colour and remove the temporary yellow development default.
   Physical follow-ups above remain explicit. Next implementation action: none
   for this change; the next parity item belongs to a fresh Lead.
+
+## Dogfood geometry correction (2026-10-11)
+
+- Short nested-group underlay root cause: ActiveGroup used hint-free projection
+  while visible tiles used minimum-hint enforcement. An offline replay matches
+  the supplied trace's short outer rectangle exactly; nested `V[W1 H[W2 W3]]`
+  coverage is also pinned. Hint-aware shared resolution and Windows retained-hint
+  transport now align the union with the ordinary plan. No live dragged frames
+  are used. Bounded geometry fields added to existing trace events.
+- Offline-delivered; native four-crate gates and independent review passed,
+  live appearance check pending. Full evidence and exact user check:
+  [geometry fix](windows-group-underlay-geometry.md).
