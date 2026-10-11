@@ -36,15 +36,17 @@
 ## Evidence and outcome
 
 - Initial pull was current at `cc7614d`; tracked working tree was clean.
-- Mechanical rename covers 296 tracked files, 17 product-path moves and 3700
-  occurrences on 3476 matching source lines. Cargo lock metadata and the tracked KWin archive and
-  checksum were regenerated. No naming exceptions were required.
-- Sequential offline gates passed: Rust workspace (1417 tests), strict
-  clippy/fmt, portable check, Windows Linux-portable allowlist (1265 tests),
+- Mechanical rename covers 296 tracked files and 17 product-path moves, plus
+  this outcome record. The initial source had 3700 occurrences on 3476 matching
+  lines; one concurrent Windows addition was also renamed. Cargo lock metadata
+  and the tracked KWin archive/checksum were regenerated. No naming exceptions
+  were required.
+- Sequential offline gates passed: Rust workspace (1419 tests), strict
+  clippy/fmt, portable check, Windows Linux-portable allowlist (1267 tests),
   KWin typecheck/bundle and JS (1308 tests in 188 suites), native CMake build,
   CTest (33 effect/full-tree and 26 settings-only), all five flake package
-  attributes and flake check. Nine shell suites passed; the source-archive
-  fixture requires committed renamed HEAD and remains pending until then.
+  attributes and flake check. All ten shell suites passed, including the
+  source-archive contract suite after committing the renamed HEAD.
 - Narrow causal corrections: Rust line reflow after shortening identifiers,
   reverse-DNS regex expectations in one JS test, and regenerated npm dependency
   hash in the flake. No behavior change or semantic failed approach.
@@ -52,4 +54,11 @@
   names recorded. Independent review passed; its historical diagnostic app-ID
   inventory prompted applying `com.omnitiler.*` to those archived IDs too.
   Only the decision's former-name entry remains in the old-name sweep.
-  Publication and committed-HEAD source-archive verification pending.
+- Final rebase preserved concurrent Windows changes `94fa4ef` and `ba92c01`
+  without conflicts. Their new first-run window class was renamed in a narrow
+  follow-up; Rust gates and the affected tray Nix build were refreshed and
+  passed. No external configuration or live-state mutation was performed.
+- Rename published as `b639878`. All six CI jobs passed:
+  [CI evidence](https://github.com/beefsack/omnitiler/actions/runs/38106207577).
+  The follow-up publishes the concurrent class-name correction and archives
+  this completed record. Container distro builds were excluded as requested.

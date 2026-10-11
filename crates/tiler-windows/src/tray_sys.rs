@@ -705,7 +705,7 @@ impl FirstRunOutcome {
 /// Owned first-run dialog window class (project-specific, like the tray
 /// class). The dialog is an exact owned `HWND`: creation, dismissal, and
 /// teardown all address that handle, never a title search.
-pub const FIRST_RUN_WINDOW_CLASS: &str = "PlasmaAutoTilerFirstRun";
+pub const FIRST_RUN_WINDOW_CLASS: &str = "OmniTilerFirstRun";
 
 /// Dialog button: stage the authentic catalog defaults.
 const FIRST_RUN_AUTHENTIC: u32 = 1;
