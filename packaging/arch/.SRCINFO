@@ -23,16 +23,20 @@ pkgbase = plasma-auto-tiler
 	sha256sums = SKIP
 
 pkgname = plasma-auto-tiler
-	pkgdesc = COSMIC-style automatic tiling for KWin; press Revert in Settings before removing
+	pkgdesc = COSMIC-style automatic tiling for KWin with Settings pages; press Revert in Settings before removing
 	install = plasma-auto-tiler.install
 	depends = kwin
 	depends = hicolor-icon-theme
-	optdepends = kconfig: kwriteconfig6/kreadconfig6 used by enable/disable paths
-	optdepends = kcmutils: kcmshell6 used by the tray Settings action
-	optdepends = plasma-auto-tiler-native-effect: ABI-matched effect and settings pages
+	depends = qt6-base
+	depends = kconfig
+	depends = kcoreaddons
+	depends = kcmutils
+	depends = ki18n
+	depends = kwidgetsaddons
+	optdepends = plasma-auto-tiler-native-effect: ABI-matched active-border effect (Settings live in core)
 
 pkgname = plasma-auto-tiler-native-effect
-	pkgdesc = Plasma Auto Tiler native KWin effect and settings pages (optional, ABI-bound)
+	pkgdesc = Plasma Auto Tiler native KWin effect, active border only (optional, ABI-bound)
 	install = plasma-auto-tiler-native-effect.install
 	depends = plasma-auto-tiler=0.1.0-1
 	depends = kwin

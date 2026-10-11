@@ -2,28 +2,34 @@ Source: plasma-auto-tiler
 Section: kde
 Priority: optional
 Maintainer: Plasma Auto Tiler Contributors <noreply@example.com>
-Build-Depends: build-essential, debhelper-compat (= 13), cargo:native, rustc:native
+Build-Depends: build-essential, debhelper-compat (= 13), cargo:native, rustc:native,
+ cmake, extra-cmake-modules (>= 6.24), qt6-base-dev,
+ libkf6config-dev, libkf6coreaddons-dev, libkf6kcmutils-dev,
+ libkf6i18n-dev, libkf6widgetsaddons-dev
 Standards-Version: 4.7.2
 Rules-Requires-Root: no
 Homepage: https://github.com/beefsack/plasma-auto-tiler
 
 Package: plasma-auto-tiler
 Architecture: any
-Depends: ${shlibs:depends}, kwin-wayland | kwin-x11, hicolor-icon-theme
-Recommends: libkf6config-bin, libkf6kcmutils-bin, plasma-auto-tiler-native-effect
-Description: COSMIC-style automatic tiling for KWin (core)
+Depends: ${shlibs:Depends}, kwin-wayland | kwin-x11, hicolor-icon-theme, libkf6config-bin, libkf6kcmutils-bin
+Recommends: plasma-auto-tiler-native-effect
+Description: COSMIC-style automatic tiling for KWin (core with Settings)
  Core of Plasma Auto Tiler: the KWin script (prebuilt, no Node needed at
  packaging time), the Rust planner/tray binary with on-demand D-Bus plus
- systemd user activation, and the application icon.
+ systemd user activation, the application icon, and both native settings
+ pages (the effect settings page and the native script settings page, the
+ Configure page referenced by the KWin script). The settings pages are
+ KWin-independent (Qt/KF6 only, built settings-only with no kwin-dev); the
+ effect reconfigure tolerates an absent effect. Only the active-border
+ effect itself is unavailable here (effect remains unsupported: it needs
+ the 6.26 CMake floor and ABI-matched KWin headers).
  .
- Tiling works with this package alone. The script Configure page and the
- tray Settings action need the companion plasma-auto-tiler-native-effect
- package (ABI-matched to your KWin); without it those entries have no
-project page. Settings availability with this split needs user review.
+ Tiling and Settings work with this package alone.
  .
  Revert before removing: open Settings and press Revert (Revert Shortcuts,
  plus Revert to KDE default on any changed host row) to restore host keys
- and shortcut overrides. Removal does not restore them; if you already
- removed without reverting, reinstall a compatible companion and press
- Revert. Core-only has no Settings page; previous companion changes can
- still persist. Disabling the script is separate.
+ and shortcut overrides. Removal does not restore them; Settings lives in
+ this package, so press Revert before removing it. If you already removed
+ without reverting, reinstall this package and press Revert. Disabling the
+ script is separate.

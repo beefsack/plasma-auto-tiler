@@ -5,31 +5,54 @@ project(plasma-auto-tiler-native-effect LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(ECM 6.26.0 REQUIRED NO_MODULE)
+# Split build: the two settings KCMs are KWin-independent (Qt/KF6 only,
+# D-Bus effect reconfigure tolerates an absent effect), while the
+# active-border effect is ABI-bound to KWin headers plus the Cargo
+# staticlib. Both default ON to keep the existing full developer build;
+# distro/Nix settings-only consumers configure with
+# -DPLASMA_AUTO_TILER_BUILD_EFFECT=OFF (needs only ECM 6.24 + Qt6/KF6),
+# and effect-only companions with
+# -DPLASMA_AUTO_TILER_BUILD_SETTINGS=OFF.
+option(PLASMA_AUTO_TILER_BUILD_EFFECT "Build the ABI-bound KWin effect" ON)
+option(PLASMA_AUTO_TILER_BUILD_SETTINGS "Build the KWin-independent settings KCMs" ON)
+
+if(PLASMA_AUTO_TILER_BUILD_EFFECT)
+    find_package(ECM 6.26.0 REQUIRED NO_MODULE)
+else()
+    find_package(ECM 6.24.0 REQUIRED NO_MODULE)
+endif()
 set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH})
 
 include(KDEInstallDirs)
 include(KDECMakeSettings)
-include(ECMSetupQtPluginMacroNames)
+if(PLASMA_AUTO_TILER_BUILD_EFFECT)
+    include(ECMSetupQtPluginMacroNames)
+endif()
 
 find_package(Qt6 REQUIRED COMPONENTS Core DBus Gui Widgets)
 
-find_package(KWin REQUIRED)
+if(PLASMA_AUTO_TILER_BUILD_EFFECT)
+    find_package(KWin REQUIRED)
+endif()
 find_package(KF6CoreAddons REQUIRED)
 find_package(KF6Config REQUIRED)
-find_package(KF6ColorScheme REQUIRED)
+if(PLASMA_AUTO_TILER_BUILD_EFFECT)
+    find_package(KF6ColorScheme REQUIRED)
+endif()
 find_package(KF6I18n REQUIRED)
 find_package(KF6KCMUtils REQUIRED)
 find_package(KF6WidgetsAddons REQUIRED)
 include("${KF6I18n_DIR}/KF6I18nMacros.cmake")
 
-ecm_setup_qtplugin_macro_names(
-    MACRO_NAMES
-        KWIN_EFFECT_FACTORY
-        KWIN_EFFECT_FACTORY_ENABLED
-        KWIN_EFFECT_FACTORY_SUPPORTED
-        KWIN_EFFECT_FACTORY_SUPPORTED_ENABLED
-)
+if(PLASMA_AUTO_TILER_BUILD_EFFECT)
+    ecm_setup_qtplugin_macro_names(
+        MACRO_NAMES
+            KWIN_EFFECT_FACTORY
+            KWIN_EFFECT_FACTORY_ENABLED
+            KWIN_EFFECT_FACTORY_SUPPORTED
+            KWIN_EFFECT_FACTORY_SUPPORTED_ENABLED
+    )
+endif()
 
 set(config_SOURCES)
 kconfig_add_kcfg_files(config_SOURCES activeborderconfig.kcfgc)
@@ -42,7 +65,9 @@ kconfig_add_kcfg_files(config_SOURCES activeborderconfig.kcfgc)
 # bare-rustc build and the hand-written group JSON parser. Rust keeps group
 # visibility and drag verdict policy behind the same POD C ABI.
 # find_program/find_package stay before all consumers so linkage never
-# relies on transitive libs.
+# relies on transitive libs. Effect-only: skipped for settings-only builds,
+# which must not find KWin/Cargo/effect dependencies.
+if(PLASMA_AUTO_TILER_BUILD_EFFECT)
 find_program(CARGO_PROGRAM cargo REQUIRED)
 # The Rust staticlib references pthread/dl (std thread internals, backtrace
 # symbolization). Link them explicitly and portably so the shared plugins
@@ -107,7 +132,9 @@ add_custom_command(
     VERBATIM
 )
 add_custom_target(plasma-auto-tiler-effect-ffi-rs DEPENDS "${EFFECT_STATICLIB}")
+endif()
 
+if(PLASMA_AUTO_TILER_BUILD_EFFECT)
 kcoreaddons_add_plugin(plasma-auto-tiler-active-border
     INSTALL_NAMESPACE "kwin/effects/plugins"
     SOURCES
@@ -132,7 +159,9 @@ target_link_libraries(plasma-auto-tiler-active-border PRIVATE
     Qt6::DBus
 )
 target_compile_options(plasma-auto-tiler-active-border PRIVATE -Wall -Wextra -Werror)
+endif()
 
+if(PLASMA_AUTO_TILER_BUILD_SETTINGS)
 set(unified_kcm_SOURCES
     unifiedsettings_module.cpp
     unifiedsettings_module.h
@@ -187,10 +216,12 @@ target_link_libraries(plasma-auto-tiler-kwin_config PRIVATE
     Qt6::Widgets
 )
 target_compile_options(plasma-auto-tiler-kwin_config PRIVATE -Wall -Wextra -Werror)
+endif()
 
 include(CTest)
 
 if(BUILD_TESTING)
+    if(PLASMA_AUTO_TILER_BUILD_EFFECT)
     add_executable(plasma-auto-tiler-active-border-logic-test
         activeborderlogic_test.cpp
     )
@@ -221,6 +252,9 @@ if(BUILD_TESTING)
     add_test(NAME native-effect-group-highlight
         COMMAND plasma-auto-tiler-active-border-group-test)
 
+    endif()
+
+    if(PLASMA_AUTO_TILER_BUILD_SETTINGS)
     set(kcm_config_test_SOURCES
         activeborderconfig_module_test.cpp
         activeborderconfig_module.cpp
@@ -232,11 +266,10 @@ if(BUILD_TESTING)
     add_executable(plasma-auto-tiler-active-border-kcm-config-test
         ${kcm_config_test_SOURCES}
     )
-    add_dependencies(plasma-auto-tiler-active-border-kcm-config-test plasma-auto-tiler-effect-ffi-rs)
+    if(PLASMA_AUTO_TILER_BUILD_EFFECT)
+        add_dependencies(plasma-auto-tiler-active-border-kcm-config-test plasma-auto-tiler-effect-ffi-rs)
+    endif()
     target_link_libraries(plasma-auto-tiler-active-border-kcm-config-test PRIVATE
-        "${EFFECT_STATICLIB}"
-        Threads::Threads
-        ${CMAKE_DL_LIBS}
         KF6::CoreAddons
         KF6::ConfigCore
         KF6::ConfigGui
@@ -251,6 +284,16 @@ if(BUILD_TESTING)
         -DTRANSLATION_DOMAIN="kwin"
         -DKPLUGINFACTORY_PLUGIN_CLASS_INTERNAL_NAME=ActiveBorderConfigModuleFactory
     )
+    if(PLASMA_AUTO_TILER_BUILD_EFFECT)
+        target_link_libraries(plasma-auto-tiler-active-border-kcm-config-test PRIVATE
+            "${EFFECT_STATICLIB}"
+            Threads::Threads
+            ${CMAKE_DL_LIBS}
+        )
+        target_compile_definitions(plasma-auto-tiler-active-border-kcm-config-test PRIVATE
+            -DPLASMA_AUTO_TILER_HAVE_EFFECT_FFI=1
+        )
+    endif()
     target_compile_options(plasma-auto-tiler-active-border-kcm-config-test PRIVATE -Wall -Wextra -Werror)
 
     add_test(NAME native-effect-kcm-dbus
@@ -422,6 +465,9 @@ if(BUILD_TESTING)
         PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
+    endif()
+
+    if(PLASMA_AUTO_TILER_BUILD_EFFECT)
     add_test(NAME native-effect-metadata-factory-validation
         COMMAND ${CMAKE_COMMAND}
             -DMETADATA_FILE=${CMAKE_CURRENT_SOURCE_DIR}/metadata.json
@@ -466,4 +512,5 @@ if(BUILD_TESTING)
             --manifest-path "${EFFECT_FFI_CRATE_DIR}/Cargo.toml"
             -p tiler-kwin-effect-ffi --lib group_highlight::
             --target-dir "${EFFECT_CARGO_TARGET_DIR}")
+    endif()
 endif()

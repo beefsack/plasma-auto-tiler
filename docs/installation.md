@@ -9,26 +9,27 @@ were checked against the live distro repositories from disposable
 containers.
 
 Build evidence: the real archive builder ran against an isolated scratch
-tag containing the proposed source changes. That archive built with fresh
+tag containing the source changes. The archives built with fresh
 Cargo homes in disposable Docker containers using `--network none`:
 
-- Tumbleweed and Fedora 44: `rpmbuild -bb` produced core and native RPMs.
+- Tumbleweed and Fedora 43/44: `rpmbuild -bb` produced core and native RPMs.
   Generated KWin dependencies were unversioned names and
   `libkwin.so.6()(64bit)`, with no exact KWin package-version requirement.
-- Fedora 43: an earlier contract-shaped source probe built both RPMs;
-  the final exact-archive verification used Fedora 44 instead.
 - Arch: `makepkg` produced both split packages; `pacman -U` resolved
   dependencies. `makepkg --printsrcinfo` matched `.SRCINFO`; `namcap`
   found no PKGBUILD errors. Shipping-package dependency warnings remain;
   the generated debug package also has symlink diagnostics.
-- Ubuntu 26.04: `dpkg-buildpackage -us -uc` produced the core `.deb`
+- Ubuntu 26.04: `dpkg-buildpackage -us -uc` produced the core-with-Settings `.deb`
   and source-package metadata. Vendored manifest backups survived cleaning;
   the tray unit is not automatically enabled.
 - RPM/Ubuntu install probes used `--nodeps`/`--force-depends`, so they
   establish payload installation and binary execution, not full dependency
   solver acceptance. No desktop, D-Bus activation or compositor was started.
 
-Detailed evidence is in the archived change record. Package binaries are
+All core artifacts contain both KCMs with no `libkwin` dependency; each
+effect companion contains only the ABI-bound effect. Settings-only Ubuntu
+builds use ECM/KF6 6.24 without `kwin-dev`. Detailed evidence is in the
+[archived change record](changes/archive/release-0.1-core-settings.md). Package binaries are
 verification artifacts, not published releases; only the source archive's
 reproducibility is claimed, not identical RPM/DEB payloads.
 
@@ -41,9 +42,9 @@ inventory before publishing. The Debian copyright file is a partial template.
 
 | Path | Purpose |
 | --- | --- |
-| `packaging/rpm/plasma-auto-tiler.spec` | One spec, two binaries: `plasma-auto-tiler` (core) and `plasma-auto-tiler-native-effect` (optional). Conditionals cover openSUSE Tumbleweed and Fedora 43/44. |
-| `packaging/arch/PKGBUILD`, `.SRCINFO`, `plasma-auto-tiler*.install` | Split package (`plasma-auto-tiler`, `plasma-auto-tiler-native-effect`) for AUR-only consumption. No OBS pacman repo: Arch scope is AUR. |
-| `packaging/debian/` | Core-only `debian/` source dir for Ubuntu 26.04. Native effect intentionally absent (blocker below). |
+| `packaging/rpm/plasma-auto-tiler.spec` | One spec, two binaries: `plasma-auto-tiler` (core with Settings) and `plasma-auto-tiler-native-effect` (effect only). Conditionals cover openSUSE Tumbleweed and Fedora 43/44. |
+| `packaging/arch/PKGBUILD`, `.SRCINFO`, `plasma-auto-tiler*.install` | Split package (`plasma-auto-tiler` with Settings, `plasma-auto-tiler-native-effect` effect only) for AUR-only consumption. No OBS pacman repo: Arch scope is AUR. |
+| `packaging/debian/` | Core-with-Settings `debian/` source dir for Ubuntu 26.04. Native effect intentionally absent (blocker below). |
 | `packaging/obs/_service` | Pins the immutable GitHub Release tarball per version and its SHA-256; never a raw git checkout. |
 | `packaging/systemd/` | `plasma-auto-tiler-tray.service` and `plasma-auto-tiler-planner.service` user units, mirroring `home-manager-module.nix`. Never auto-enabled by any recipe. |
 | `packaging/bump-version.sh` | Rewrites the pinned version across all recipes for a release (`--version X.Y.Z [--sha256 ...]`). |
@@ -56,17 +57,19 @@ at `/usr/share/kwin/scripts/plasma-auto-tiler-kwin/` (exactly
 `metadata.json`, `contents/code/main.js`, `contents/config/main.xml`,
 `contents/ui/config.ui`; the bundle is prebuilt, recipes never run npm),
 `/usr/share/dbus-1/services/org.plasmaautotiler.Planner.service`,
-`/usr/lib/systemd/user/plasma-auto-tiler-{tray,planner}.service`, and the
-hicolor SVG icon.
+`/usr/lib/systemd/user/plasma-auto-tiler-{tray,planner}.service`, the
+hicolor SVG icon, and both native settings pages (KWin-independent,
+Qt/KF6 only) under the Qt6 plugin dir -
+`kwin/effects/configs/plasma-auto-tiler-active-border_config.so` and
+`kwin/scripts/configs/plasma-auto-tiler-kwin_config.so` (the Configure page
+referenced by the KWin script).
 
 Native effect (`plasma-auto-tiler-native-effect`, where offered): exactly
-three plugins under the Qt6 plugin dir -
-`kwin/effects/plugins/plasma-auto-tiler-active-border.so`,
-`kwin/effects/configs/plasma-auto-tiler-active-border_config.so`, and
-`kwin/scripts/configs/plasma-auto-tiler-kwin_config.so`. JSON metadata is
+one plugin under the Qt6 plugin dir -
+`kwin/effects/plugins/plasma-auto-tiler-active-border.so`. JSON metadata is
 embedded in the `.so` files at compile time (`K_PLUGIN_CLASS_WITH_JSON` /
 `KWIN_EFFECT_FACTORY`), so no `.json` ships alongside; this matches the
-flake `installCheck` file set.
+flake `installCheck` file sets (effect-only vs settings-only).
 
 ## Enable, tray, and planner
 
@@ -82,14 +85,13 @@ Recipes install files only. To use them:
 ## Revert before removing (all managers)
 
 "Revert" means the Settings page buttons, not disabling the script.
-While the companion is installed, Settings offers Revert Shortcuts (restores
-KDE defaults for cleared shortcut bindings) and per-row Revert to KDE
-default (removes the local host key so the KDE default takes effect again).
-Press Revert before removing the companion or core: removal does not
-restore host keys or shortcut overrides. If you already removed without
-reverting, reinstall a compatible companion and press Revert. A core-only
-install has no Settings page. Changes from a previously installed companion
-can still persist and require restoration.
+Settings (with Revert) lives in core: removing the effect companion alone
+leaves Settings and Revert available. Press Revert before removing core:
+Revert Shortcuts (restores KDE defaults for cleared shortcut bindings) and
+per-row Revert to KDE default (removes the local host key so the KDE
+default takes effect again). Removal does not
+restore host keys or shortcut overrides. If you already removed
+core without reverting, reinstall core and press Revert.
 Disabling the script (setting `plasma-auto-tiler-kwinEnabled=false` and
 reconfiguring KWin) is a separate step and does not restore host settings.
 
@@ -108,7 +110,15 @@ matches the running KWin. So:
 
 - After every KWin/Plasma upgrade, update the native-effect package to the
   rebuild against the new headers before relying on the effect. Core tiling
-  keeps working without it.
+  and Settings keep working without it.
+- Split layout note (0.1, pre-release): core ships both KCM plugins and the
+  companion ships the effect plugin only. RPM keeps the companion's
+  exact-version core requirement (`Requires: %{name} =
+  %{version}-%{release}`) and Arch keeps
+  `depends=("plasma-auto-tiler=$pkgver-$pkgrel" ...)` on the companion to
+  keep installs paired; neither is claimed to migrate file ownership across
+  updates (no predecessor was ever published). Removing the effect
+  companion alone always leaves Settings/Revert in core.
 - KWin 6.7.5's [loader source](https://github.com/KDE/kwin/blob/v6.7.5/src/effect/effectloader.cpp)
   checks the plugin IID before `loader.instance()` and returns null on a
   mismatch. Its [factory header](https://github.com/KDE/kwin/blob/v6.7.5/src/effect/effect.h)
@@ -129,15 +139,14 @@ matches the running KWin. So:
 
 ## Without the companion: what still works
 
-Tiling, workspaces, shortcuts, and the planner keep working on core alone.
-What is missing: the script Configure page and the tray Settings action
-have no project page until the ABI-matched native-effect package is
-installed (the script's `X-KDE-ConfigModule` resolves only then; the Nix
-flake records the same limitation). This stays an open product question.
-Recommendation for user review: move the KWin-independent native KCMs to
-core (or a non-effect settings companion), leaving only the ABI-bound effect
-optional. This would preserve Settings and Revert without borders and could
-help Ubuntu. That ownership/build split is not implemented or approved.
+Tiling, workspaces, shortcuts, Settings (including Revert), and the planner
+keep working on core alone. What is missing without the ABI-matched
+companion: only the active-border effect itself (the effect reconfigure
+from Settings tolerates the absent effect and keeps Apply enabled via
+retry-on-next-save). The script's `X-KDE-ConfigModule` resolves to the
+core-shipped native script KCM; the Nix flake ships the same split
+(`packages.native-settings` always alongside `packages.native-effect` in
+the NixOS module).
 
 ## Per-distro notes
 
@@ -157,15 +166,20 @@ help Ubuntu. That ownership/build split is not implemented or approved.
   6.30.0, unprefixed `kconfig`/`kcmutils`/etc., `rust` 1.99 shipping cargo).
   Split PKGBUILD; local AUR-shaped builds see the user's own KWin. There is
   no OBS pacman repo and none is planned.
-- Ubuntu 26.04 core only (verified Oct 2026: `rustc`/`cargo` 1.93.1,
-  `debhelper` 13.31, `kwin-wayland`/`kwin-x11` and `kwin-dev` 6.6.x,
-  `libkf6config-bin`/`libkf6kcmutils-bin` shipping the helpers; core
-  `.deb` built end-to-end, see evidence above). Native effect blocked:
-  `extra-cmake-modules` 6.24 is below the hard 6.26 CMake floor, and
-  `nodejs` 22 is below the old build floor (irrelevant for core-only,
-  which never runs npm). The `Recommends:
-  plasma-auto-tiler-native-effect` in `debian/control` is aspirational
-  until that floor moves; apt ignores unresolvable Recommends.
+- Ubuntu 26.04 core with Settings (target stack, Oct 2026 apt candidates:
+  `rustc`/`cargo` 1.93.1,
+  `debhelper` 13.31, `extra-cmake-modules` 6.24 with the settings-only 6.24
+  CMake floor, `libkf6*-dev` 6.24, `qt6-base-dev` 6.10, no `kwin-dev`
+  needed for the settings build; end-to-end offline `.deb` build verified).
+  Native effect blocked only by its 6.26 CMake floor (resolute ships
+  extra-cmake-modules 6.24); the distro `kwin-dev` 6.6.x headers match the
+  distro runtime and are not themselves the blocker. The `Recommends:
+  plasma-auto-tiler-native-effect` in
+  `debian/control` is aspirational until an effect package exists; apt
+  ignores unresolvable Recommends. Runtime KF dependencies for the
+  core-shipped KCMs resolve via shlibdeps into `${shlibs:Depends}`, and the
+  enable/Settings helpers are hard dependencies
+  (`libkf6config-bin`, `libkf6kcmutils-bin`).
 - KDE neon: no OBS target provisioning exists (upstream
   openSUSE/open-build-service#19317); do not promise it.
 
@@ -215,9 +229,10 @@ transaction/rebuild verification; no solver simulation of those cases was run.
   release tarball as `Source0`; full builds need the distro deps above).
 - Arch: `makepkg --printsrcinfo` / `makepkg -s` from `packaging/arch/`
   with the release tarball URL reachable.
-- Debian: copy the release tarball to
-  `plasma-auto-tiler_0.1.0.orig.tar.gz` beside its extracted directory
-  (adjust the version for later releases), overlay `packaging/debian/` as
-  `debian/` inside it, then run `dpkg-buildpackage -us -uc` there.
+- Debian: place the release tarball beside the build directory, renamed to
+  `plasma-auto-tiler_0.1.0.orig.tar.gz` (adjust the version for later
+  releases; the rename is required by the `3.0 (quilt)` source format),
+  extract it, overlay `packaging/debian/` as `debian/` inside the extracted
+  directory, then run `dpkg-buildpackage -us -uc` there.
 - Version bump check: `packaging/bump-version.sh --version <current>`
   must be a no-op.

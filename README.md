@@ -14,8 +14,8 @@ live evidence and are not claimed here.
 
 ### Distribution archive
 
-Distro packaging (RPM, Arch, Debian core-only, OBS wiring) is tentative
-0.1 offline preparation: see `docs/installation.md`.
+Distro packaging (RPM, Arch, Debian core with Settings) is verified offline;
+publication and OBS wiring remain pending: see `docs/installation.md`.
 
 Create the reproducible KPackage release artifact and its checksum sidecar:
 
@@ -32,19 +32,22 @@ contains only `metadata.json`, `contents/code/main.js`,
 temporary roots; it does not install, enable, configure, or reconfigure a live
 KWin session.
 
-The archive is script-only by necessity: it cannot embed the ABI-dependent
-native script settings KCM (`kwin/scripts/configs/plasma-auto-tiler-kwin_config`,
-referenced by `kwin/metadata.json` `X-KDE-ConfigModule`). A KWin C++ plugin
-must be rebuilt against the exact KWin development headers of the target host,
-so no portable prebuilt binary can ship inside the `.kwinscript`. The script
-settings Configure page therefore resolves only when the companion
-ABI-matched native delivery is installed alongside this package on the same
-host: the NixOS module (`packages.native-effect` via `lib.mkNativeEffect`),
-the dogfood `effect-install` staging, or the dev `target/kwin-native-effect-stage`
-stage. A script-only install (for example a KDE Store download with no
-companion) still installs and runs, but its script settings have no project
-Configure page until the matching native build is present. Installing any
-package never implies the effect is enabled.
+The archive is script-only by necessity: it cannot embed a KWin C++ plugin,
+which must be built for the target host, so no portable prebuilt binary can
+ship inside the `.kwinscript`. Two independent native pieces exist outside
+the archive. The Settings pages (effect settings plus the script settings
+KCM referenced by `kwin/metadata.json` `X-KDE-ConfigModule`) are
+KWin-independent and ship in core on every distro route (and as
+`packages.native-settings` on Nix); a script-only install shows the project
+Configure page as soon as any settings provider is installed. Only the
+active-border effect itself is ABI-bound: it needs a build against the
+host's KWin development headers (the NixOS module's `packages.native-effect`
+via `lib.mkNativeEffect`, the dogfood `effect-install` staging, or the dev
+`target/kwin-native-effect-stage` stage). A script-only install (for example
+a KDE Store download with no settings provider) still installs and runs,
+but needs a settings provider for Configure and a matching effect build for
+the border effect.
+Installing any package never implies the effect is enabled.
 
 ### Nix consumption
 
@@ -53,10 +56,13 @@ systems. It exports these packages for `aarch64-linux` and `x86_64-linux`:
 
 - `packages.default` and `packages.tray` - the optional Rust tray binary
 - `packages.kwin-script` - the KWin script KPackage
-- `packages.native-effect` - the native effect, the effect-scoped KCM, and
-  the native script settings KCM, built from this flake's pinned nixpkgs input
-- `lib.mkKwinScript`, `lib.mkNativeEffect`, and `lib.mkTray` - package helpers;
-  `lib.mkNativeEffect` can receive an explicit matching `kwin` package
+- `packages.native-effect` - the ABI-bound native effect only, built from
+  this flake's pinned nixpkgs input
+- `packages.native-settings` - the KWin-independent native settings KCMs
+  (effect settings page and script settings KCM), built from the same input
+- `lib.mkKwinScript`, `lib.mkNativeEffect`, `lib.mkNativeSettings`, and
+  `lib.mkTray` - package helpers; `lib.mkNativeEffect` can receive an
+  explicit matching `kwin` package
 
 It also exports `nixosModules.default` and `homeManagerModules.default`.
 
@@ -77,7 +83,7 @@ host-pkgs safe on that path.
 Add the NixOS module to the system `modules` list and enable
 `programs.plasma-auto-tiler.enable`. Add the Home Manager module to the Home
 Manager modules and enable `programs.plasma-auto-tiler.tray.enable` only when
-the tray is wanted. NixOS owns the script/native-effect packages and writes
+the tray is wanted. NixOS owns the script/effect/settings packages and writes
 only `[Plugins] plasma-auto-tiler-kwinEnabled=true`; it does not enable the
 border or mutate shortcuts. Home Manager owns only the optional immutable
 tray systemd user unit (`plasma-auto-tiler-tray.service`, bound to

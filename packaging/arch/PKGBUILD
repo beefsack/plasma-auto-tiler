@@ -61,13 +61,14 @@ build() {
 }
 
 package_plasma-auto-tiler() {
-  pkgdesc='COSMIC-style automatic tiling for KWin; press Revert in Settings before removing'
-  depends=(kwin hicolor-icon-theme)
+  pkgdesc='COSMIC-style automatic tiling for KWin with Settings pages; press Revert in Settings before removing'
+  # Core ships the KCMs, so their direct Qt/KF6 runtimes plus the
+  # enable/Settings journey helpers (kwriteconfig6/kreadconfig6 in kconfig,
+  # kcmshell6 in kcmutils) are hard requirements, not optionals. kwin stays
+  # as the script host; hicolor-icon-theme for the icon layout.
+  depends=(kwin hicolor-icon-theme qt6-base kconfig kcoreaddons kcmutils ki18n kwidgetsaddons)
   install=plasma-auto-tiler.install
-  # Helpers, not hard requirements: tiling works without them.
-  optdepends=('kconfig: kwriteconfig6/kreadconfig6 used by enable/disable paths'
-              'kcmutils: kcmshell6 used by the tray Settings action'
-              'plasma-auto-tiler-native-effect: ABI-matched effect and settings pages')
+  optdepends=('plasma-auto-tiler-native-effect: ABI-matched active-border effect (Settings live in core)')
   cd "$pkgbase-$pkgver"
   install -Dm755 target/release/plasma-auto-tiler "$pkgdir/usr/bin/plasma-auto-tiler"
   # KWin script: the exact prebuilt four-file set, no npm involved.
@@ -87,10 +88,16 @@ package_plasma-auto-tiler() {
     "$pkgdir/usr/lib/systemd/user/plasma-auto-tiler-planner.service"
   install -Dm644 assets/icons/plasma-auto-tiler.svg \
     "$pkgdir/usr/share/icons/hicolor/scalable/apps/plasma-auto-tiler.svg"
+  # KWin-independent settings pages (Qt/KF6 only; JSON metadata is embedded
+  # in the .so files at compile time, so no .json ships alongside).
+  # Installed via the full native tree, minus the ABI-bound effect plugin
+  # (which belongs to the companion below).
+  DESTDIR="$pkgdir" cmake --install build-native
+  rm -f "$pkgdir/usr/lib/qt6/plugins/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
 }
 
 package_plasma-auto-tiler-native-effect() {
-  pkgdesc='Plasma Auto Tiler native KWin effect and settings pages (optional, ABI-bound)'
+  pkgdesc='Plasma Auto Tiler native KWin effect, active border only (optional, ABI-bound)'
   # Deliberately unversioned KWin dependency: this package must never hold a
   # KWin upgrade back (a pinned dependency makes pacman -Su fail until the
   # effect is rebuilt/removed), and an exact dependency still would not prove
@@ -100,9 +107,14 @@ package_plasma-auto-tiler-native-effect() {
   depends=("plasma-auto-tiler=$pkgver-$pkgrel" kwin)
   install=plasma-auto-tiler-native-effect.install
   cd "$pkgbase-$pkgver"
-  # Three plugins; JSON metadata is embedded in the .so files at compile
-  # time, so no .json ships alongside.
+  # Effect plugin only; Settings/Revert live in core, so removing this
+  # package alone leaves them available. The exact-version core dependency
+  # keeps effect/core installs paired. This split layout (both KCM plugins
+  # in core, effect plugin here) is new and pre-release: no predecessor was
+  # ever published, so no file-ownership migration across updates is claimed.
   DESTDIR="$pkgdir" cmake --install build-native
+  rm -f "$pkgdir/usr/lib/qt6/plugins/kwin/effects/configs/plasma-auto-tiler-active-border_config.so" \
+    "$pkgdir/usr/lib/qt6/plugins/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
 }
 
 # vim: ft=sh

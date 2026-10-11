@@ -110,6 +110,15 @@ platform API behavior.
 
 ## Settings, Tray and First-Run
 
+- User-approved 2026-10-11 (KDE package ownership): distro core package
+  `plasma-auto-tiler` ships both KWin-independent Settings KCMs, providing
+  tiling plus Settings/Apply/Revert without the optional effect.
+  `plasma-auto-tiler-native-effect` carries only the KWin-ABI-bound effect.
+  Core means the distro package; no KDE code goes into `crates/tiler-core`.
+  Nix exports independent `native-settings` and effect-only `native-effect`;
+  the NixOS module installs both alongside the script. Removing the effect
+  leaves Settings/Revert available; recovery after removing core requires
+  reinstalling core. [Delivery](changes/archive/release-0.1-core-settings.md).
 - Tentative Orchestrator 2026-10-11, pending user review: defaults-only in
   0.1 for D03, D09, D10, D12, D13, D27; defer their already-proposed functional
   settings/options/WM tooltips to P2 `0.1 triage settings follow-up` after 0.1.

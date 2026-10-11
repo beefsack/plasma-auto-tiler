@@ -1,4 +1,4 @@
-{ config, lib, kwinScript, nativeEffect, ... }:
+{ config, lib, kwinScript, nativeEffect, nativeSettings, ... }:
 
 let
   cfg = config.programs.plasma-auto-tiler;
@@ -15,7 +15,7 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    environment.systemPackages = [ cfg.package nativeEffect ];
+    environment.systemPackages = [ cfg.package nativeEffect nativeSettings ];
 
     # Keep KWin's global profile immutable and limit it to this script's
     # namespaced enablement key. User kwinrc remains independently owned.

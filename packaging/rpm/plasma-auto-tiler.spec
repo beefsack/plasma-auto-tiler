@@ -28,8 +28,10 @@ BuildRequires:  systemd-rpm-macros
 # recipe independent of the kwin6-devel (openSUSE) / kwin-devel (Fedora)
 # package-name split; both providers were verified to supply cmake(KWin).
 BuildRequires:  cmake(KWin)
-# ECM floor is this repo's hard CMake requirement
-# (kwin/native-effect/CMakeLists.txt: find_package(ECM 6.26.0 REQUIRED)).
+# ECM floor is the effect's hard CMake requirement
+# (kwin/native-effect/CMakeLists.txt: find_package(ECM 6.26.0 REQUIRED) when
+# the effect builds; the KWin-independent settings KCMs need only 6.24.0).
+# This recipe always builds the full native tree, so the 6.26.0 floor stays.
 %if 0%{?suse_version}
 BuildRequires:  kf6-extra-cmake-modules >= 6.26.0
 BuildRequires:  qt6-base-devel
@@ -72,23 +74,26 @@ Recommends:     %{name}-native-effect
 %description
 Core of Plasma Auto Tiler: the KWin script (prebuilt, no Node needed at
 packaging time), the Rust planner/tray binary with on-demand D-Bus plus
-systemd user activation, and the application icon.
+systemd user activation, the application icon, and both native settings
+pages (the effect settings page and the native script settings page, the
+Configure page referenced by the KWin script). The settings pages are
+KWin-independent (Qt/KF6 only); the effect reconfigure tolerates an absent
+effect.
 
-Tiling works with this package alone. The script Configure page and the
-tray Settings action need the companion plasma-auto-tiler-native-effect
-package (ABI-matched to your KWin); without it those entries have no
-project page. Settings availability with this split needs user review.
+Tiling and Settings work with this package alone. Only the active-border
+effect itself needs the companion plasma-auto-tiler-native-effect package
+(ABI-matched to your KWin).
 
 Revert before removing: open Settings and press Revert (Revert Shortcuts,
 plus Revert to KDE default on any changed host row) to restore host keys
-and shortcut overrides. Removal does not restore them; if you already
-removed without reverting, reinstall a compatible companion and press
-Revert. Core-only has no Settings page; previous companion changes can
-still persist. Disabling the script is separate (set
-plasma-auto-tiler-kwinEnabled=false and reconfigure KWin).
+and shortcut overrides. Removal does not restore them; Settings lives in
+this package, so press Revert before removing it. If you already removed
+without reverting, reinstall this package and press Revert. Disabling the
+script is separate (set plasma-auto-tiler-kwinEnabled=false and reconfigure
+KWin).
 
 %package native-effect
-Summary:        Plasma Auto Tiler native KWin effect and settings pages
+Summary:        Plasma Auto Tiler native KWin effect (active border)
 Requires:       %{name} = %{version}-%{release}
 # Deliberately unversioned: this package must never hold a KWin upgrade
 # back (a pinned Requires would block host security updates), and an exact
@@ -103,17 +108,23 @@ Requires:       kwin
 %endif
 
 %description native-effect
-Optional ABI-bound companion: the native active-border effect plus the
-effect settings page and the native script settings page (the Configure
-page referenced by the KWin script). Tied to the KWin development headers
-it was built against; after a KWin upgrade, update this package before
-relying on the effect. Removing it leaves core tiling working.
+Optional ABI-bound companion: the native active-border effect only. The
+settings pages (with Revert) live in the core package, so removing this
+companion alone leaves Settings and Revert available. Tied to the KWin
+development headers it was built against; after a KWin upgrade, update this
+package before relying on the effect. Removing it leaves core tiling and
+Settings working, minus the border effect.
+The exact-version core requirement keeps effect/core installs paired. This
+split layout (both KCM plugins in core, effect plugin here) is new and
+pre-release: no predecessor was ever published, so no file-ownership
+migration across updates is claimed.
 
-Revert before removing: open Settings and press Revert (Revert Shortcuts,
-plus Revert to KDE default on any changed host row) to restore host keys
-and shortcut overrides. Removal does not restore them; if you already
-removed without reverting, reinstall a compatible companion and press
-Revert. Disabling the script or unloading the effect is separate.
+Revert before removing: no Revert step is lost by removing this package
+alone (Settings stays in core). Removal does not restore host keys or
+shortcut overrides; press Revert in the core Settings before removing core.
+If you already removed core without reverting, reinstall core and press
+Revert.
+Disabling the script or unloading the effect is separate.
 
 %prep
 %setup -q -n %{name}-%{version}
@@ -174,8 +185,10 @@ install -Dm644 packaging/systemd/plasma-auto-tiler-planner.service \
 # Icon.
 install -Dm644 assets/icons/plasma-auto-tiler.svg \
   %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/plasma-auto-tiler.svg
-# Native effect (three plugins; JSON metadata is embedded in the .so files
-# at compile time, so no .json ships alongside).
+# Native effect plus settings pages (three plugins; JSON metadata is
+# embedded in the .so files at compile time, so no .json ships alongside).
+# %files splits them: the two KCMs belong to core, the effect plugin to the
+# companion.
 DESTDIR=%{buildroot} cmake --install build-native
 
 # Do not use systemd_user_post here: it applies distro presets and may
@@ -189,18 +202,16 @@ DESTDIR=%{buildroot} cmake --install build-native
 %systemd_user_postun plasma-auto-tiler-tray.service plasma-auto-tiler-planner.service
 # Final erase only ($1=0): upgrades ($1=1) keep host settings untouched.
 if [ $1 -eq 0 ]; then
-  echo "plasma-auto-tiler removed. Press Revert in Settings before removing:"
+  echo "plasma-auto-tiler removed (including Settings). Press Revert in Settings before removing:"
   echo "that step restores host keys and shortcut overrides, removal does not."
-  echo "If you already removed without reverting, reinstall a compatible"
-  echo "companion and press Revert (core-only has no Settings page)."
+  echo "If you already removed without reverting, reinstall this package and press Revert."
 fi
 
 %postun native-effect
 if [ $1 -eq 0 ]; then
-  echo "plasma-auto-tiler-native-effect removed. Press Revert in Settings before"
-  echo "removing: that step restores host keys and shortcut overrides, removal"
-  echo "does not. If you already removed without reverting, reinstall a"
-  echo "compatible companion and press Revert."
+  echo "plasma-auto-tiler-native-effect removed. Settings and Revert remain"
+  echo "available in the core package: removal does not restore host keys or"
+  echo "shortcut overrides, so press Revert in the core Settings if needed."
 fi
 
 %files
@@ -210,11 +221,13 @@ fi
 %{_userunitdir}/plasma-auto-tiler-tray.service
 %{_userunitdir}/plasma-auto-tiler-planner.service
 %{_datadir}/icons/hicolor/scalable/apps/plasma-auto-tiler.svg
+# KWin-independent settings pages (Qt/KF6 only; JSON metadata is embedded in
+# the .so files at compile time, so no .json ships alongside).
+%{kwin_plugindir}/kwin/effects/configs/plasma-auto-tiler-active-border_config.so
+%{kwin_plugindir}/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so
 
 %files native-effect
 %{kwin_plugindir}/kwin/effects/plugins/plasma-auto-tiler-active-border.so
-%{kwin_plugindir}/kwin/effects/configs/plasma-auto-tiler-active-border_config.so
-%{kwin_plugindir}/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so
 
 %changelog
 * Sat Oct 10 2026 Plasma Auto Tiler Contributors - 0.1.0-1

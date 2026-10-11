@@ -37,10 +37,11 @@ decisions of 2026-09-24 are under
     [Tentative decisions](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review).
   - P1 0.1 packaging: offline recipes/archive/tag workflows and
     Revert-before-removal guidance prepared 2026-10-11; distro offline
-    builds passed. Remaining: Settings-without-KCM product decision,
-    OBS tag-to-stable source/checksum handoff, accounts/provisioning,
+    builds passed. Core Settings ownership approved and delivered 2026-10-11
+    ([evidence](changes/archive/release-0.1-core-settings.md)); effect companion
+    is effect-only. Remaining: OBS tag-to-stable source/checksum handoff, accounts/provisioning,
     licensing confirmation, runtime/solver validation. Ubuntu native ECM
-    floor and neon provisioning remain blocked.
+    floor (effect only) and neon provisioning remain blocked.
     [Evidence](changes/archive/release-0.1-offline-packaging.md).
   - External NixOS/Home Manager validation (P1 gate).
   - Workspace tiling toggle Meta+Y (KDE) delivered offline 2026-10-11;

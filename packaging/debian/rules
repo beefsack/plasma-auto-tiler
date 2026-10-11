@@ -1,8 +1,10 @@
 #!/usr/bin/make -f
-# Tentative 0.1 core-only recipe for Ubuntu 26.04 (see
-# docs/installation.md). The native effect is intentionally absent here:
-# resolute ships extra-cmake-modules 6.24, below this repo's hard 6.26
-# CMake floor. Core needs only cargo/rustc plus file installs.
+# Tentative 0.1 core-with-Settings recipe for Ubuntu 26.04 (see
+# docs/installation.md). Core ships both native settings pages, built
+# settings-only (PLASMA_AUTO_TILER_BUILD_EFFECT=OFF): no kwin-dev, no Cargo
+# effect staticlib, ECM floor 6.24 matching resolute's extra-cmake-modules
+# and KF6 6.24 stack. The native effect itself stays absent (needs the 6.26
+# CMake floor plus ABI-matched KWin headers).
 #
 # Source contract: build from the immutable GitHub Release tarball produced
 # by release.yml (scripts/build-source-archive.sh), which already contains
@@ -30,7 +32,7 @@ override_dh_installsystemduser:
 # the source package clean.
 override_dh_clean:
 	dh_clean -Xvendor
-	rm -rf target
+	rm -rf target build-settings
 
 override_dh_auto_build:
 	# Fail closed: the recipe version must match the release tarball.
@@ -44,6 +46,15 @@ override_dh_auto_build:
 	cargo --config 'source.crates-io.replace-with="vendored-sources"' \
 	      --config "source.vendored-sources.directory=\"$$PWD/vendor\"" \
 	      build --release --locked --offline -p plasma-auto-tiler
+	# Settings-only native KCMs (Qt/KF6 only): no KWin, no Cargo effect
+	# staticlib, no network. Default CMake build would require kwin-dev.
+	cmake -S kwin/native-effect -B build-settings \
+	      -DCMAKE_BUILD_TYPE=Release \
+	      -DBUILD_TESTING=OFF \
+	      -DPLASMA_AUTO_TILER_BUILD_EFFECT=OFF \
+	      -DPLASMA_AUTO_TILER_BUILD_SETTINGS=ON \
+	      -DCMAKE_INSTALL_PREFIX=/usr
+	cmake --build build-settings
 
 override_dh_auto_install:
 	install -Dm755 target/release/plasma-auto-tiler debian/plasma-auto-tiler/usr/bin/plasma-auto-tiler
@@ -62,3 +73,7 @@ override_dh_auto_install:
 	  debian/plasma-auto-tiler/usr/lib/systemd/user/plasma-auto-tiler-planner.service
 	install -Dm644 assets/icons/plasma-auto-tiler.svg \
 	  debian/plasma-auto-tiler/usr/share/icons/hicolor/scalable/apps/plasma-auto-tiler.svg
+	# KWin-independent settings pages (JSON metadata is embedded in the
+	# .so files at compile time, so no .json ships alongside). Runtime KF
+	# dependencies resolve via shlibdeps into ${shlibs:Depends}.
+	DESTDIR=$$(pwd)/debian/plasma-auto-tiler cmake --install build-settings

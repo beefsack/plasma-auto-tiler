@@ -123,6 +123,11 @@
 
           cmakeFlags = [
             "-DBUILD_TESTING=${if withTests then "ON" else "OFF"}"
+            "-DPLASMA_AUTO_TILER_BUILD_EFFECT=ON"
+            # withTests builds the original full tree (settings ON) so the
+            # combined FFI assertions stay gated; the shipping derivation
+            # stays effect-only (settings OFF).
+            "-DPLASMA_AUTO_TILER_BUILD_SETTINGS=${if withTests then "ON" else "OFF"}"
             "-DKDE_INSTALL_PLUGINDIR=lib/qt-6/plugins"
             "-DKWin_DIR=${kwinDev}/lib/cmake/KWin"
           ];
@@ -131,15 +136,83 @@
           installCheckPhase = ''
             runHook preInstallCheck
             test -f "$out/lib/qt-6/plugins/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
-            test -f "$out/lib/qt-6/plugins/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
-            test -f "$out/lib/qt-6/plugins/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
+            ${if withTests then ''
+              # Test-only derivation: the full tree ships both KCMs as test
+              # artifacts alongside the effect.
+              test -f "$out/lib/qt-6/plugins/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+              test -f "$out/lib/qt-6/plugins/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
+            '' else ''
+              # Shipping derivation: effect only, never the KCMs.
+              test ! -e "$out/lib/qt-6/plugins/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+              test ! -e "$out/lib/qt-6/plugins/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
+            ''}
             test ! -e "$out/lib/qt-6/plugins/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
             test ! -e "$out/lib/qt-6/plugins/kwin/scripts/configs/plasma-auto-tiler-drag-oracle_config.so"
             ${if withTests then ''
-              # Hermetic native gates: offscreen platform, isolated config
+              # Hermetic full gates: offscreen platform, isolated config
               # home; the test binaries isolate the session bus themselves.
               # installCheck runs with the build directory as cwd, so invoke
-              # ctest directly.
+              # ctest directly. This is the original 32-test suite
+              # (reconciler, KCM shortcut/config with FFI, metadata
+              # validation, Rust FFI).
+              export QT_QPA_PLATFORM=offscreen
+              export XDG_CONFIG_HOME="$NIX_BUILD_TOP/check-home"
+              mkdir -p "$XDG_CONFIG_HOME"
+              ctest --output-on-failure
+            '' else ""}
+            runHook postInstallCheck
+          '';
+        };
+
+      mkNativeSettings =
+        { pkgs
+        , withTests ? false
+        }:
+        let
+          kde = pkgs.kdePackages;
+        in
+        pkgs.stdenv.mkDerivation {
+          pname = "plasma-auto-tiler-native-settings";
+          version = "0.1.0";
+          src = nativeEffectSource pkgs;
+          sourceRoot = "source/kwin/native-effect";
+
+          nativeBuildInputs = [
+            pkgs.cmake
+            pkgs.ninja
+            pkgs.pkg-config
+            kde.extra-cmake-modules
+          ];
+          buildInputs = [
+            pkgs.qt6Packages.qtbase
+            kde.kconfig
+            kde.kcoreaddons
+            kde.kcmutils
+            kde.ki18n
+            kde.kwidgetsaddons
+          ];
+          dontWrapQtApps = true;
+
+          cmakeFlags = [
+            "-DBUILD_TESTING=${if withTests then "ON" else "OFF"}"
+            "-DPLASMA_AUTO_TILER_BUILD_EFFECT=OFF"
+            "-DPLASMA_AUTO_TILER_BUILD_SETTINGS=ON"
+            "-DKDE_INSTALL_PLUGINDIR=lib/qt-6/plugins"
+          ];
+
+          doInstallCheck = true;
+          installCheckPhase = ''
+            runHook preInstallCheck
+            test -f "$out/lib/qt-6/plugins/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+            test -f "$out/lib/qt-6/plugins/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
+            test ! -e "$out/lib/qt-6/plugins/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+            test ! -e "$out/lib/qt-6/plugins/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
+            test ! -e "$out/lib/qt-6/plugins/kwin/scripts/configs/plasma-auto-tiler-drag-oracle_config.so"
+            ${if withTests then ''
+              # Hermetic settings gates: offscreen platform, isolated config
+              # home; the test binaries isolate the session bus themselves.
+              # Effect-gated tests (logic, group, metadata, Rust FFI) are
+              # configured out of this settings-only build.
               export QT_QPA_PLATFORM=offscreen
               export XDG_CONFIG_HOME="$NIX_BUILD_TOP/check-home"
               mkdir -p "$XDG_CONFIG_HOME"
@@ -239,7 +312,7 @@
     in
     {
       lib = {
-        inherit mkKwinScript mkNativeEffect mkTray;
+        inherit mkKwinScript mkNativeEffect mkNativeSettings mkTray;
       };
 
       nixosModules.default = { config, lib, pkgs, ... }:
@@ -250,6 +323,7 @@
             sourceRev = self.rev or "local-dev";
           };
           nativeEffect = self.lib.mkNativeEffect { inherit pkgs; };
+          nativeSettings = self.lib.mkNativeSettings { inherit pkgs; };
         };
 
       homeManagerModules.default = { config, lib, pkgs, ... }:
@@ -269,6 +343,7 @@
             sourceRev = self.rev or "local-dev";
           };
           nativeEffect = self.lib.mkNativeEffect { inherit pkgs; };
+          nativeSettings = self.lib.mkNativeSettings { inherit pkgs; };
           tray = self.lib.mkTray {
             inherit pkgs;
             sourceRev = self.rev or "local-dev";
@@ -370,6 +445,7 @@
         assert !(nixpkgs.lib.hasInfix "planner" activation);
         assert builtins.elem kwinScript enabledNixos.config.environment.systemPackages;
         assert builtins.elem nativeEffect enabledNixos.config.environment.systemPackages;
+        assert builtins.elem nativeSettings enabledNixos.config.environment.systemPackages;
         assert !(builtins.elem tray enabledNixos.config.environment.systemPackages);
         assert !(builtins.hasAttr "xdg/kwinrc" disabledNixos.config.environment.etc);
         assert !(builtins.hasAttr desktopFile enabledHome.config.home.file);
@@ -424,11 +500,19 @@
             touch "$out"
           '';
           native-effect = nativeEffect;
-          # Test-enabled native build: compiles the KCM/effect sources
-          # with BUILD_TESTING=ON and runs the full hermetic CTest suite
-          # (reconciler, KCM shortcut/config, metadata validation, Rust
-          # FFI) offscreen. Same inputs as the delivery derivation.
+          native-settings = nativeSettings;
+          # Test-enabled full native build: compiles the effect plus KCM
+          # sources with BUILD_TESTING=ON and runs the original hermetic
+          # 32-test CTest suite (reconciler, KCM shortcut/config with FFI,
+          # metadata validation, Rust FFI) offscreen. Same inputs as the
+          # delivery derivation; the KCMs here are test-only artifacts
+          # (the shipping effect derivation stays effect-only).
           native-effect-tests = self.lib.mkNativeEffect { inherit pkgs; withTests = true; };
+          # Test-enabled settings-only build: compiles the KCM sources with
+          # BUILD_TESTING=ON and runs the hermetic settings CTest gates
+          # (reconciler, KCM shortcut/config, script discovery validation)
+          # offscreen. Effect-gated tests are configured out here.
+          native-settings-tests = self.lib.mkNativeSettings { inherit pkgs; withTests = true; };
         });
 
       packages = forAllSystems (system:
@@ -447,6 +531,7 @@
           default = tray;
           kwin-script = kwinScript;
           native-effect = mkNativeEffect { inherit pkgs; };
+          native-settings = mkNativeSettings { inherit pkgs; };
           tray = tray;
         });
     };

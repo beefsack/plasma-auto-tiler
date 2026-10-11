@@ -1,16 +1,17 @@
 # Pacman install scriptlet for plasma-auto-tiler (core).
 # Removal never touches host settings: press Revert in Settings before
-# removing, or reinstall a compatible companion and press Revert after.
+# removing, or reinstall this package and press Revert after.
 
 post_install() {
   echo "See docs/installation.md for the KWin script enable step and systemd user units."
   echo "Press Revert in Settings before removing: removal does not restore host keys"
-  echo "or shortcut overrides (core-only has no Settings page, so nothing was changed)."
+  echo "or shortcut overrides (Settings live in this package)."
 }
 
 post_remove() {
-  echo "plasma-auto-tiler removed. Removal does not restore host keys or shortcut"
-  echo "overrides: if you did not press Revert in Settings first, reinstall a"
-  echo "compatible companion and press Revert (Revert Shortcuts, plus Revert to"
-  echo "KDE default on changed host rows). Disabling the script is separate."
+  echo "plasma-auto-tiler removed (including Settings). Removal does not restore host keys or shortcut"
+  echo "overrides: if you did not press Revert in Settings first, reinstall this"
+  echo "package and press"
+  echo "Revert (Revert Shortcuts, plus Revert to KDE default on changed host rows)."
+  echo "Disabling the script is separate."
 }

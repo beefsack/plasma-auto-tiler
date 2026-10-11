@@ -598,6 +598,10 @@ void groupUnderlayExtensionDefaultsToBorderWidth()
     }
     KWin::ActiveBorderConfig::self()->read();
     CHECK(KWin::ActiveBorderConfig::groupUnderlayExtension() == -1.0);
+    // Effect FFI policy: the default sentinel follows the current border
+    // width. Gated out of settings-only builds (no Cargo staticlib there);
+    // the full effect build keeps these gates.
+#ifdef PLASMA_AUTO_TILER_HAVE_EFFECT_FFI
     // Default sentinel follows the current border width: changing the
     // border width to 5 while the extension stays at default resolves to 5.
     CHECK(KWin::groupUnderlayEffectiveExtension(KWin::ActiveBorderConfig::groupUnderlayExtension(), 3.0) == 3.0);
@@ -618,6 +622,7 @@ void groupUnderlayExtensionDefaultsToBorderWidth()
     }
     KWin::ActiveBorderConfig::self()->read();
     CHECK(KWin::groupUnderlayEffectiveExtension(KWin::ActiveBorderConfig::groupUnderlayExtension(), KWin::ActiveBorderConfig::borderWidth()) == 0.0);
+#endif
     {
         KConfigGroup group = borderGroup();
         group.deleteEntry(QStringLiteral("GroupUnderlayExtension"));
