@@ -10,9 +10,9 @@
 
 ## Scope and plan
 
-- Windows adapter changes preferred; no concurrent KDE/core edits unless needed.
-- Worker investigates and implements one bounded geometry fix; Lead reviews,
-  runs gates, updates the existing group-underlay archive and publishes this note.
+- Windows adapter changes preferred; KDE/shared-core edits only if needed.
+- Investigate and implement one bounded geometry fix; review, run gates and
+  update the existing group-underlay archive with the outcome.
 - No live tests, windows/hooks/input/harness launches or dependency installs.
 
 ## Verification
